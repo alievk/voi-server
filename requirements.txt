@@ -1,0 +1,20 @@
+PyYAML
+aiohttp
+aiosqlite
+pytest
+pytest-asyncio
+mypy
+flake8
+black
+numpy
+scipy
+websockets
+ffmpeg
+
+# voicebot_audio_api
+fastapi 
+aiofiles 
+whisperx 
+python-multipart 
+catboost 
+git+https://github.com/gkorepanov/whisper-stream.git
