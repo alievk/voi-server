@@ -27,8 +27,11 @@ def save_audio_to_file(chunks):
     filename = f"audio_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.wav"
     audio_data = b''.join(chunks)
 
-    tmp_dir = '/tmp'
+    tmp_dir = 'logs/audio/chunks'
+    if not os.path.exists(tmp_dir):
+        os.makedirs(tmp_dir)
     filename = os.path.join(tmp_dir, filename)
+    
     # Save PCM 16-bit audio
     with wave.open(filename, 'wb') as wf:
         wf.setnchannels(1)
@@ -67,14 +70,34 @@ class WebmToPcmConverter:
         self.output_queue = multiprocessing.Queue()
         self.callback = callback
         self.loop = loop
+        self.webm_buffer = b''
+        self.webm_file = None
 
     def start(self):
         self.process = multiprocessing.Process(target=self._run)
         self.process.start()
         threading.Thread(target=self._process_output, daemon=True).start()
+        self._create_webm_file()
+
+    def _create_webm_file(self):
+        timestamp = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
+        filename = f"audio_{timestamp}.webm"
+        tmp_dir = 'logs/audio/webm'
+        if not os.path.exists(tmp_dir):
+            os.makedirs(tmp_dir)
+        self.webm_file = open(os.path.join(tmp_dir, filename), 'wb')
 
     def put(self, chunk):
         self.input_queue.put(chunk)
+        self.webm_buffer += chunk
+        if len(self.webm_buffer) >= 1024 * 1024:  # 1MB buffer
+            self._write_webm_buffer()
+
+    def _write_webm_buffer(self):
+        if self.webm_file:
+            self.webm_file.write(self.webm_buffer)
+            self.webm_file.flush()
+        self.webm_buffer = b''
 
     def _run(self):
         logging.info("WebmToPcmConverter _run")
@@ -128,17 +151,10 @@ class WebmToPcmConverter:
         ], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
     def stop(self):
+        self._write_webm_buffer()  # Write any remaining data
+        if self.webm_file:
+            self.webm_file.close()
         self.process.terminate()
-
-class AudioBuffer:
-    def __init__(self, max_size=480000):  # 10 seconds at 48kHz
-        self.buffer = deque(maxlen=max_size)
-
-    def add(self, chunk):
-        self.buffer.extend(chunk)
-
-    def get_segment(self, duration=960, overlap=96):  # 20ms segments, 2ms overlap
-        return np.array(list(self.buffer)[-duration:])
 
 class Transcriber:
     def __init__(self):
