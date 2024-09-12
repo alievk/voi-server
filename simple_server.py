@@ -12,10 +12,12 @@ import webrtcvad
 import subprocess
 import multiprocessing
 import threading
+import torch
 
 import sys, os
 sys.path.append(os.path.dirname(__file__))
 import voicebot_audio_api.src.main as vba
+from voicebot_audio_api.src.vad_processing import Chunker
 
 vba.CACHE_ROOT = '/home/user/.cache'
 model = vba.get_whisper_model()
@@ -65,7 +67,7 @@ def save_audio_to_file(chunks):
 
     # return "recorded_audio.wav"
 
-def convert_audio_to_float(buffer):
+def convert_s16le_to_float(buffer):
     return np.frombuffer(buffer, dtype='<i2').flatten().astype(np.float32) / 32768.0
 
 class WebmToPcmConverter:
@@ -108,7 +110,7 @@ class WebmToPcmConverter:
         logging.info("WebmToPcmConverter _run")
         ffmpeg_process = self._start_ffmpeg_process()
         buffer = b''
-        chunk_size = SAMPLE_RATE * 2  # 1 second of audio at 48kHz, 16-bit
+        chunk_size = SAMPLE_RATE * 2 * 1
 
         def send_chunks():
             while True:
@@ -165,8 +167,9 @@ class Transcriber:
     def __init__(self):
         self.model = vba.get_whisper_model()
 
-    async def transcribe(self, segment):
-        audio = convert_audio_to_float(segment)
+    async def transcribe(self, audio):
+        if isinstance(audio, bytes):
+            audio = convert_s16le_to_float(audio)
         iterator = vba.async_transcribe(None, audio=audio, model=self.model, language='ru')
         skip_first = False
         try:
@@ -196,29 +199,42 @@ class Conversation:
         self.last_audio_time = asyncio.get_event_loop().time()
         self.pcm_buffer += pcm_chunk
         
-        segment_size = SAMPLE_RATE * 10  # 1 second at 48kHz, 16-bit audio
+        segment_size = SAMPLE_RATE * 2 * 3
+        overlap_size = SAMPLE_RATE * 2 * 1
         
-        logging.debug(f"PCM buffer size: {len(self.pcm_buffer)} bytes")
+        logging.info(f"PCM buffer size: {len(self.pcm_buffer)} bytes")
         
         if len(self.pcm_buffer) < segment_size:
             return
         
         segment = self.pcm_buffer[:segment_size]
-        self.pcm_buffer = self.pcm_buffer[segment_size:]
+        self.pcm_buffer = self.pcm_buffer[segment_size-overlap_size:]
 
-        # is_speech = self.vad.is_speech(segment, SAMPLE_RATE)
-        # logging.debug(f"VAD result: {'speech' if is_speech else 'non-speech'}")
-        is_speech = True
-        
-        if is_speech:
+        logging.info(f"Segment size: {len(segment)} bytes")
+
+        text = None
+        try:
             text = await self.transcriber.transcribe(segment)
-            if text:
-                logging.info(f"Transcribed text: {text}")
-                self.current_utterance.append(text)
-                await self.send_partial_utterance()
-        else:
-            logging.debug("Finalizing utterance due to non-speech")
-            await self.finalize_utterance()
+        except Exception as e:
+            logging.error(f"Error in transcriber: {e}")
+
+        if text:
+            logging.info(f"Transcribed text: {text}")
+            await self.websocket.send(f"{self.current_utterance_id}:{text}")
+
+        # # is_speech = self.vad.is_speech(segment, SAMPLE_RATE)
+        # # logging.debug(f"VAD result: {'speech' if is_speech else 'non-speech'}")
+        # is_speech = True
+        
+        # if is_speech:
+        #     text = await self.transcriber.transcribe(segment)
+        #     if text:
+        #         logging.info(f"Transcribed text: {text}")
+        #         self.current_utterance.append(text)
+        #         await self.send_partial_utterance()
+        # else:
+        #     logging.debug("Finalizing utterance due to non-speech")
+        #     await self.finalize_utterance()
 
     async def send_partial_utterance(self):
         combined_text = " ".join(self.current_utterance)
@@ -227,7 +243,7 @@ class Conversation:
     async def finalize_utterance(self):
         if self.current_utterance:
             combined_text = " ".join(self.current_utterance)
-            await self.websocket.send(f"FINAL:{self.current_utterance_id}:{combined_text}")
+            await self.websocket.send(f"{self.current_utterance_id}:{combined_text}")
             self.current_utterance = []
             self.current_utterance_id += 1
 
