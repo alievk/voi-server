@@ -20,8 +20,10 @@ import voicebot_audio_api.src.main as vba
 vba.CACHE_ROOT = '/home/user/.cache'
 model = vba.get_whisper_model()
 
-logging.getLogger().setLevel(logging.DEBUG)
+logging.getLogger().setLevel(logging.INFO)
 # logging.basicConfig(level=logging.DEBUG)
+
+SAMPLE_RATE = 16000
 
 def save_audio_to_file(chunks):
     filename = f"audio_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.wav"
@@ -36,7 +38,7 @@ def save_audio_to_file(chunks):
     with wave.open(filename, 'wb') as wf:
         wf.setnchannels(1)
         wf.setsampwidth(2)  # 2 bytes for 16-bit
-        wf.setframerate(48000)
+        wf.setframerate(SAMPLE_RATE)
         wf.writeframes(b''.join(chunks))
 
     return filename
@@ -45,7 +47,7 @@ def save_audio_to_file(chunks):
     #     process = (
     #         ffmpeg
     #         .input('pipe:0', format='webm')
-    #         .output('recorded_audio.wav', format='wav', acodec='pcm_s16le', ar=48000, ac=1)
+    #         .output('recorded_audio.wav', format='wav', acodec='pcm_s16le', ar=SAMPLE_RATE, ac=1)
     #         .overwrite_output()
     #         .run_async(pipe_stdin=True, pipe_stdout=True, pipe_stderr=True)
     #     )
@@ -62,6 +64,9 @@ def save_audio_to_file(chunks):
     #     logging.error(f"Error saving audio: {str(e)}")
 
     # return "recorded_audio.wav"
+
+def convert_audio_to_float(buffer):
+    return np.frombuffer(buffer, dtype='<i2').flatten().astype(np.float32) / 32768.0
 
 class WebmToPcmConverter:
     def __init__(self, callback, loop):
@@ -103,7 +108,7 @@ class WebmToPcmConverter:
         logging.info("WebmToPcmConverter _run")
         ffmpeg_process = self._start_ffmpeg_process()
         buffer = b''
-        chunk_size = 48000 * 2  # 1 second of audio at 48kHz, 16-bit
+        chunk_size = SAMPLE_RATE * 2  # 1 second of audio at 48kHz, 16-bit
 
         def send_chunks():
             while True:
@@ -145,7 +150,7 @@ class WebmToPcmConverter:
             '-i', 'pipe:0',
             '-f', 's16le',
             '-acodec', 'pcm_s16le',
-            '-ar', '48000',
+            '-ar', f'{SAMPLE_RATE}',
             '-ac', '1',
             'pipe:1'
         ], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -161,8 +166,8 @@ class Transcriber:
         self.model = vba.get_whisper_model()
 
     async def transcribe(self, segment):
-        filename = save_audio_to_file([segment])
-        iterator = vba.async_transcribe(path=filename, model=self.model, language='ru')
+        audio = convert_audio_to_float(segment)
+        iterator = vba.async_transcribe(None, audio=audio, model=self.model, language='ru')
         skip_first = False
         try:
             async for text_chunk in iterator:
@@ -191,7 +196,7 @@ class Conversation:
         self.last_audio_time = asyncio.get_event_loop().time()
         self.pcm_buffer += pcm_chunk
         
-        segment_size = 48000 * 10  # 1 second at 48kHz, 16-bit audio
+        segment_size = SAMPLE_RATE * 10  # 1 second at 48kHz, 16-bit audio
         
         logging.debug(f"PCM buffer size: {len(self.pcm_buffer)} bytes")
         
@@ -201,7 +206,7 @@ class Conversation:
         segment = self.pcm_buffer[:segment_size]
         self.pcm_buffer = self.pcm_buffer[segment_size:]
 
-        # is_speech = self.vad.is_speech(segment, 48000)
+        # is_speech = self.vad.is_speech(segment, SAMPLE_RATE)
         # logging.debug(f"VAD result: {'speech' if is_speech else 'non-speech'}")
         is_speech = True
         
