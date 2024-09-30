@@ -1,0 +1,66 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+
+# Virtual environments
+venv/
+env/
+.env
+
+# IDEs and editors
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Jupyter Notebooks
+.ipynb_checkpoints/
+
+# Logs
+*.log
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# Build outputs
+dist/
+build/
+
+# Dependencies
+node_modules/
+
+# Audio files
+*.mp3
+*.wav
+
+# Docker
+.dockerignore
+
+# Temporary files
+*.tmp
+
+# Database files
+*.db
+*.sqlite3
+
+# Compiled Python files
+*.pyc
+
+# Caches
+.cache/
+
+# Test coverage
+.coverage
+htmlcov/
+
+# Private keys
+*.pem
+*.key
+*.p12
+*.cer
+*.crt
+*.csr
+*.der
+*.pfx
