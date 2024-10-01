@@ -2,6 +2,7 @@ import asyncio
 import multiprocessing
 import os, sys
 import ssl
+import json
 import subprocess
 import threading
 from collections import deque
@@ -128,16 +129,26 @@ class Conversation:
 
     async def handle_audio(self, audio_chunk):
         result = self.asr.process_chunk(audio_chunk)
+
+        # TODO: detect speech_id
+        result["speech_id"] = 0
+
         if result and self.handle_transcription_cb:
             await self.handle_transcription_cb(result)
 
 
 async def handle_connection(websocket):
+    logger.info("New connection is started")
+
     async def handle_audio(audio_chunk):
         await conversation.handle_audio(audio_chunk)
 
     async def handle_transcription(data):
-        logger.info(f"Received transcription: {data}")
+        try:
+            data = json.dumps(data)
+            await websocket.send(data)
+        except Exception as e:
+            logger.error(f"Error sending transcription: {e}")
 
     converter = WebmToPcmConverter(handle_audio)
     converter.start()
@@ -150,19 +161,16 @@ async def handle_connection(websocket):
                 converter.put(message)
             elif message == 'END_CONVERSATION':
                 logger.info("Received END_CONVERSATION message")
-                # await conversation.end_conversation()
                 break
             else:
                 logger.warning(f"Received unexpected message: {message}")
         logger.info("WebSocket connection closed, checking timeout")
-        # await conversation.check_timeout()
     except websockets.exceptions.ConnectionClosed:
         logger.info("WebSocket connection closed unexpectedly")
-        # await conversation.end_conversation()
     finally:
         logger.info("Stopping audio converter")
         converter.stop()
-    logger.info("Done")
+    logger.info("Connection is done")
 
 
 ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
