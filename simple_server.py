@@ -90,8 +90,7 @@ class WebmToPcmConverter:
         ], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
     def _create_webm_file(self):
-        timestamp = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
-        filename = f"audio_{timestamp}.webm"
+        filename = f"audio_{get_timestamp()}.webm"
         tmp_dir = 'logs/audio/webm'
         if not os.path.exists(tmp_dir):
             os.makedirs(tmp_dir)
@@ -177,7 +176,13 @@ ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
 ssl_context.load_cert_chain('localhost+2.pem', 'localhost+2-key.pem')
 
 
+def get_timestamp():
+    return datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
+
+    
 async def main():
+    logger.add(f"logs/text/server-{get_timestamp()}.log", rotation="100 MB")
+
     server = await websockets.serve(
         handle_connection,
         "0.0.0.0",
