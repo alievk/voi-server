@@ -8,6 +8,7 @@ import threading
 from collections import deque
 from datetime import datetime
 import signal
+import wave
 
 import numpy as np
 import torch
@@ -17,6 +18,40 @@ from loguru import logger
 from streaming import OnlineASR, SAMPLING_RATE
 
 
+class WavSaver:
+    def __init__(self, filename, channels=1, sample_width=2, framerate=16000, buffer_size=1024*1024):
+        self.filename = filename
+        self.channels = channels
+        self.sample_width = sample_width
+        self.framerate = framerate
+        self.buffer_size = buffer_size
+        self.wav_file = None
+        self.buffer = b''
+        self._create_wav_file()
+
+    def write(self, chunk):
+        self.buffer += chunk
+        if len(self.buffer) >= self.buffer_size:
+            self._flush_buffer()
+
+    def _create_wav_file(self):
+        os.makedirs(os.path.dirname(self.filename), exist_ok=True)
+        self.wav_file = wave.open(os.path.join(self.filename), 'wb')
+        self.wav_file.setnchannels(self.channels)
+        self.wav_file.setsampwidth(self.sample_width)
+        self.wav_file.setframerate(self.framerate)
+
+    def _flush_buffer(self):
+        if self.wav_file and self.buffer:
+            self.wav_file.writeframes(self.buffer)
+            self.buffer = b''
+
+    def close(self):
+        self._flush_buffer()
+        if self.wav_file:
+            self.wav_file.close()
+
+
 class WebmToPcmConverter:
     def __init__(self, audio_callback, chunk_size_ms=1000):
         self.ffmpeg_process = None
@@ -24,10 +59,9 @@ class WebmToPcmConverter:
         self.output_queue = multiprocessing.Queue()
         self.audio_callback = audio_callback
         self.chunk_size = int(chunk_size_ms / 1000 * SAMPLING_RATE * 2)
-        self.webm_buffer = b''
-        self.webm_file = None
         self.running = False
         self.threads = []
+        self.audio_saver = None
 
     def start(self):
         self.running = True
@@ -39,14 +73,14 @@ class WebmToPcmConverter:
         ]
         for thread in self.threads:
             thread.start()
-        self._create_webm_file()
+        self._create_audio_saver()
+
+    def _create_audio_saver(self):
+        audio_filename = os.path.join('logs/audio/incoming', f"incoming_{get_timestamp()}.wav")
+        self.audio_saver = WavSaver(audio_filename)
 
     def put(self, chunk):
         self.input_queue.put(chunk)
-        self.webm_buffer += chunk
-        # write buffer to file every 1MB
-        if len(self.webm_buffer) >= 1024 * 1024:
-            self._flush_webm_buffer()
 
     def _ffmpeg_in_pipe(self):
         while self.running:
@@ -72,11 +106,13 @@ class WebmToPcmConverter:
             return np.frombuffer(buffer, dtype='<i2').flatten().astype(np.float32) / 32768.0
 
         while self.running:
-            pcm_chunk = self.output_queue.get()
-            if pcm_chunk is None:
+            s16le_chunk = self.output_queue.get()
+            if s16le_chunk is None:
                 break
-            pcm_chunk = convert_s16le_to_f32le(pcm_chunk)
-            asyncio.run_coroutine_threadsafe(self.audio_callback(pcm_chunk), loop)
+            f32le_chunk = convert_s16le_to_f32le(s16le_chunk)
+            asyncio.run_coroutine_threadsafe(self.audio_callback(f32le_chunk), loop)
+            if self.audio_saver:
+                self.audio_saver.write(s16le_chunk)
 
     def _start_ffmpeg_process(self):
         return subprocess.Popen([
@@ -89,28 +125,14 @@ class WebmToPcmConverter:
             'pipe:1'
         ], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
-    def _create_webm_file(self):
-        filename = f"audio_{get_timestamp()}.webm"
-        tmp_dir = 'logs/audio/webm'
-        if not os.path.exists(tmp_dir):
-            os.makedirs(tmp_dir)
-        self.webm_file = open(os.path.join(tmp_dir, filename), 'wb')
-
-    def _flush_webm_buffer(self):
-        if self.webm_file:
-            self.webm_file.write(self.webm_buffer)
-            self.webm_file.flush()
-        self.webm_buffer = b''
-
     def stop(self):
         self.running = False
 
         self.input_queue.put(None)
         self.output_queue.put(None)
 
-        self._flush_webm_buffer()
-        if self.webm_file:
-            self.webm_file.close()
+        if self.audio_saver:
+            self.audio_saver.close()
 
         if self.ffmpeg_process:
             self.ffmpeg_process.kill()
