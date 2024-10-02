@@ -53,7 +53,7 @@ class WavSaver:
 
 
 class WebmToPcmConverter:
-    def __init__(self, audio_callback, chunk_size_ms=1000):
+    def __init__(self, audio_callback, chunk_size_ms=1000, save_audio_path=None):
         self.ffmpeg_process = None
         self.input_queue = multiprocessing.Queue()
         self.output_queue = multiprocessing.Queue()
@@ -62,8 +62,12 @@ class WebmToPcmConverter:
         self.running = False
         self.threads = []
         self.audio_saver = None
+        self.save_audio_path = save_audio_path or f"logs/audio/incoming-{get_timestamp()}.wav"
 
     def start(self):
+        if self.running:
+            return
+
         self.running = True
         self.ffmpeg_process = self._start_ffmpeg_process()
         self.threads = [
@@ -73,11 +77,8 @@ class WebmToPcmConverter:
         ]
         for thread in self.threads:
             thread.start()
-        self._create_audio_saver()
-
-    def _create_audio_saver(self):
-        audio_filename = os.path.join('logs/audio/incoming', f"incoming_{get_timestamp()}.wav")
-        self.audio_saver = WavSaver(audio_filename)
+            
+        self.audio_saver = WavSaver(self.save_audio_path)
 
     def put(self, chunk):
         self.input_queue.put(chunk)
@@ -159,6 +160,9 @@ class Conversation:
 
 
 async def handle_connection(websocket):
+    log_dir = f"logs/conversations/{get_timestamp()}"
+    logger.add(f"{log_dir}/server.log", rotation="100 MB")
+
     logger.info("New connection is started")
 
     async def handle_audio(audio_chunk):
@@ -171,7 +175,7 @@ async def handle_connection(websocket):
         except Exception as e:
             logger.error(f"Error sending transcription: {e}")
 
-    converter = WebmToPcmConverter(handle_audio)
+    converter = WebmToPcmConverter(handle_audio, save_audio_path=f"{log_dir}/incoming.wav")
     converter.start()
 
     conversation = Conversation(handle_transcription)
@@ -201,9 +205,9 @@ ssl_context.load_cert_chain('localhost+2.pem', 'localhost+2-key.pem')
 def get_timestamp():
     return datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
 
-    
+
 async def main():
-    logger.add(f"logs/text/server-{get_timestamp()}.log", rotation="100 MB")
+    logger.add(f"logs/server/server-{get_timestamp()}.log", rotation="100 MB")
 
     server = await websockets.serve(
         handle_connection,
