@@ -245,8 +245,13 @@ class OnlineASR:
             logger.debug("Fast forwarding audio buffer to: {:.2f}", ff_time)
             self.audio_buffer.fast_forward(ff_time)
 
-        return {
+        result = {
             "confirmed_text": Word.to_text(confirmed_words),
             "unconfirmed_text": Word.to_text(self.h_buffer.unconfirmed_words)
         }
+
+        logger.debug("Confirmed text: {}", result["confirmed_text"])
+        logger.debug("Unconfirmed text: {}", result["unconfirmed_text"])
+
+        return result
 
