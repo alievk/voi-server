@@ -8,12 +8,12 @@ from loguru import logger
 import whisperx
 
 
-SAMPLING_RATE = 16000
+SAMPLING_RATE = 16000 # Hz
 
-MIN_AUDIO_BUFFER_SIZE = 3
-MAX_AUDIO_BUFFER_SIZE = 15
+MIN_AUDIO_BUFFER_DURATION = 3 # seconds
+MAX_AUDIO_BUFFER_DURATION = 15 # seconds    
 
-ASR_CONTEXT_LENGTH = 200
+ASR_CONTEXT_LENGTH = 200 # words
 
 
 def load_audio(fname, sr):
@@ -48,10 +48,17 @@ class FakeAudioStream:
 
 
 class AudioBuffer:
-    def __init__(self, sampling_rate=SAMPLING_RATE, min_size=MIN_AUDIO_BUFFER_SIZE, max_size=MAX_AUDIO_BUFFER_SIZE):
+    def __init__(
+        self, 
+        sampling_rate=SAMPLING_RATE, 
+        min_duration=MIN_AUDIO_BUFFER_DURATION, 
+        max_duration=MAX_AUDIO_BUFFER_DURATION
+    ):
         self.sampling_rate = sampling_rate
-        self.min_size = int(min_size * sampling_rate)
-        self.max_size = int(max_size * sampling_rate)
+        self.min_duration = min_duration
+        self.max_duration = max_duration
+        self.min_size = int(min_duration * sampling_rate)
+        self.max_size = int(max_duration * sampling_rate)
         self.buffer = None
         self.offset = None # global time of the buffer's first element
         self.clear()
@@ -60,11 +67,14 @@ class AudioBuffer:
         assert isinstance(data, np.ndarray), f"Invalid data type: {type(data)}"
         self.buffer = np.concatenate([self.buffer, data])
         if len(self.buffer) < self.min_size:
-            logger.debug("Audio buffer is shorter than {}s", MIN_AUDIO_BUFFER_SIZE)
+            logger.debug("Audio buffer ({:.2f}s) is shorter than {}s", len(self.buffer) / self.sampling_rate, self.min_duration)
             return None, None
         elif len(self.buffer) > self.max_size:
-            self.buffer = self.buffer[-self.max_size:]
+            o_offset = self.offset
+            logger.debug("Audio buffer ({:.2f}s) is longer than {}s, trimming.", len(self.buffer) / self.sampling_rate, self.max_duration)
             self.offset += (len(self.buffer) - self.max_size) / self.sampling_rate
+            self.buffer = self.buffer[-self.max_size:]
+            logger.debug("New buffer length: {:.2f}s. Offset: {:.2f}s -> {:.2f}s", len(self.buffer) / self.sampling_rate, o_offset, self.offset)
         return self.buffer, self.offset
 
     def clear(self):
@@ -74,7 +84,9 @@ class AudioBuffer:
         return buffer, offset
 
     def fast_forward(self, time):
-        assert time >= self.offset, f"Negative fast forward unsupported ({time=}, {self.offset=})"
+        if time < self.offset:
+            logger.debug("Ignoring negative fast forward: {:.2f} -> {:.2f}s. Maybe the buffer was front-trimmed?", self.offset, time)
+            return
         ff = min(time - self.offset, len(self.buffer) / self.sampling_rate)
         ff_size = int(ff * self.sampling_rate)
         self.buffer = self.buffer[ff_size:]
