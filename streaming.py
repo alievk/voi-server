@@ -234,9 +234,11 @@ class OnlineASR:
 
     @logger.catch
     def process_chunk(self, chunk, finalize=False, return_audio=False):
+        sr = self.audio_buffer.sampling_rate
+
         if finalize:
             audio, offset = self.audio_buffer.clear()
-            logger.debug("Flushing audio buffer of length: {:.2f}", len(audio) / SAMPLING_RATE)
+            logger.debug("Flushing audio buffer of length: {:.2f}", len(audio) / sr)
             if not audio.any(): # buffer is empty
                 return None
         else:
@@ -244,7 +246,7 @@ class OnlineASR:
             if audio is None: # buffer is not filled yet
                 return None
 
-        logger.debug("Transcribing audio of length: {:.2f}, offset: {:.2f}", len(audio) / SAMPLING_RATE, offset)
+        logger.debug("Transcribing audio of length: {:.2f}, offset: {:.2f}", len(audio) / sr, offset)
 
         if self.context_length > 0: 
             context = Word.to_text(self.h_buffer.confirmed_words)[-self.context_length:]
@@ -253,9 +255,15 @@ class OnlineASR:
             context = None
         
         words = self.asr.transcribe(audio, previous_text=context)
-        logger.opt(colors=True).debug("<g>Buffer transcription: {}</g>", Word.to_text(words))
-    
         words = Word.apply_offset(words, offset)
+        logger.opt(colors=True).debug("<g>Buffer transcription: {}</g>", Word.to_text(words))
+
+        # TODO: it relays on the last word end time, which is not accurate. 
+        #       better to track speech activity detection (vad)
+        if words:
+            silence_time = offset + len(audio) / sr - words[-1].end
+        else:
+            silence_time = 0
     
         confirmed_words, unconfirmed_words = self.h_buffer.update(words)
         
@@ -267,7 +275,8 @@ class OnlineASR:
 
         result = {
             "confirmed_text": Word.to_text(confirmed_words),
-            "unconfirmed_text": Word.to_text(unconfirmed_words)
+            "unconfirmed_text": Word.to_text(unconfirmed_words),
+            "silence_time": silence_time
         }
 
         if return_audio:
@@ -275,6 +284,7 @@ class OnlineASR:
 
         logger.debug("Confirmed text: {}", result["confirmed_text"])
         logger.debug("Unconfirmed text: {}", result["unconfirmed_text"])
+        logger.debug("Silence time: {:.2f}", silence_time)
 
         return result
 
