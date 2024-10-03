@@ -152,6 +152,8 @@ class HypothesisBuffer:
 
         self.unconfirmed_words = current_words
 
+        return self.confirmed_words, self.unconfirmed_words
+
     @staticmethod
     def _longest_common_prefix(s1, s2):
         min_len = min(len(s1), len(s2))
@@ -255,9 +257,8 @@ class OnlineASR:
     
         words = Word.apply_offset(words, offset)
     
-        self.h_buffer.update(words)
+        confirmed_words, unconfirmed_words = self.h_buffer.update(words)
         
-        confirmed_words = self.h_buffer.confirmed_words
         if confirmed_words:
             # fast forward to the end of the last confirmed word + margin to compensate alignment inaccuracy
             ff_time = confirmed_words[-1].end + FAST_FORWARD_TIME_MARGIN
@@ -266,7 +267,7 @@ class OnlineASR:
 
         result = {
             "confirmed_text": Word.to_text(confirmed_words),
-            "unconfirmed_text": Word.to_text(self.h_buffer.unconfirmed_words)
+            "unconfirmed_text": Word.to_text(unconfirmed_words)
         }
 
         if return_audio:
