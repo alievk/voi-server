@@ -216,7 +216,7 @@ class OnlineASR:
         self.h_buffer = HypothesisBuffer()
 
     @logger.catch
-    def process_chunk(self, chunk, finalize=False):
+    def process_chunk(self, chunk, finalize=False, return_audio=False):
         if finalize:
             audio, offset = self.audio_buffer.clear()
             logger.debug("Flushing audio buffer of length: {:.2f}", len(audio) / SAMPLING_RATE)
@@ -249,6 +249,9 @@ class OnlineASR:
             "confirmed_text": Word.to_text(confirmed_words),
             "unconfirmed_text": Word.to_text(self.h_buffer.unconfirmed_words)
         }
+
+        if return_audio:
+            result["audio"] = audio
 
         logger.debug("Confirmed text: {}", result["confirmed_text"])
         logger.debug("Unconfirmed text: {}", result["unconfirmed_text"])
