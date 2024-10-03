@@ -237,41 +237,47 @@ class OnlineASR:
         sr = self.audio_buffer.sampling_rate
 
         if finalize:
-            audio, offset = self.audio_buffer.clear()
+            audio, buffer_offset = self.audio_buffer.clear()
             logger.debug("Flushing audio buffer of length: {:.2f}", len(audio) / sr)
             if not audio.any(): # buffer is empty
                 return None
         else:
-            audio, offset = self.audio_buffer.push(chunk)
+            audio, buffer_offset = self.audio_buffer.push(chunk)
             if audio is None: # buffer is not filled yet
                 return None
 
-        logger.debug("Transcribing audio of length: {:.2f}, offset: {:.2f}", len(audio) / sr, offset)
+        buffer_duration = len(audio) / sr
+        buffer_end_time = buffer_offset + buffer_duration
 
-        if self.context_length > 0: 
+        logger.debug("Transcribing audio of length: {:.2f}, buffer offset: {:.2f}", buffer_duration, buffer_offset)
+
+        if self.context_length > 0:
             context = Word.to_text(self.h_buffer.confirmed_words)[-self.context_length:]
             logger.debug("Conditioning on: {}", context)
         else:
             context = None
         
         words = self.asr.transcribe(audio, previous_text=context)
-        words = Word.apply_offset(words, offset)
+        words = Word.apply_offset(words, buffer_offset)
         logger.opt(colors=True).debug("<g>Buffer transcription: {}</g>", Word.to_text(words))
 
         # TODO: it relays on the last word end time, which is not accurate. 
         #       better to track speech activity detection (vad)
         if words:
-            silence_time = offset + len(audio) / sr - words[-1].end
+            silence_time = buffer_end_time - words[-1].end
         else:
-            silence_time = 0
+            silence_time = buffer_duration
     
         confirmed_words, unconfirmed_words = self.h_buffer.update(words)
         
         if confirmed_words:
-            # fast forward to the end of the last confirmed word + margin to compensate alignment inaccuracy
-            ff_time = confirmed_words[-1].end + FAST_FORWARD_TIME_MARGIN
-            logger.debug("Fast forwarding audio buffer to: {:.2f}", ff_time)
+            # fast forward to the middle of the last confirmed word and the first unconfirmed word
+            # it's less likely to cut the current utterance by mistake
+            start = confirmed_words[-1].end
+            end = unconfirmed_words[0].start if unconfirmed_words else buffer_end_time
+            ff_time = (start + end) / 2
             self.audio_buffer.fast_forward(ff_time)
+            logger.debug("Fast forwarding audio buffer to: {:.2f}", ff_time)
 
         result = {
             "confirmed_text": Word.to_text(confirmed_words),
