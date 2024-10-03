@@ -13,6 +13,8 @@ SAMPLING_RATE = 16000 # Hz
 MIN_AUDIO_BUFFER_DURATION = 3 # seconds
 MAX_AUDIO_BUFFER_DURATION = 15 # seconds    
 
+FAST_FORWARD_TIME_MARGIN = 0.1 # seconds
+
 ASR_CONTEXT_LENGTH = 200 # words
 
 
@@ -216,7 +218,8 @@ class OfflineASR:
 
 
 class OnlineASR:
-    def __init__(self):
+    def __init__(self, context_length=ASR_CONTEXT_LENGTH):
+        self.context_length = context_length
         self.audio_buffer = None
         self.h_buffer = None
         self.asr = OfflineASR('en')
@@ -241,10 +244,13 @@ class OnlineASR:
 
         logger.debug("Transcribing audio of length: {:.2f}, offset: {:.2f}", len(audio) / SAMPLING_RATE, offset)
 
-        confirmed_text = Word.to_text(self.h_buffer.confirmed_words)[-ASR_CONTEXT_LENGTH:]
-        logger.debug("Conditioning on: {}", confirmed_text)
+        if self.context_length > 0: 
+            context = Word.to_text(self.h_buffer.confirmed_words)[-self.context_length:]
+            logger.debug("Conditioning on: {}", context)
+        else:
+            context = None
         
-        words = self.asr.transcribe(audio, previous_text=confirmed_text)
+        words = self.asr.transcribe(audio, previous_text=context)
         logger.opt(colors=True).debug("<g>Buffer transcription: {}</g>", Word.to_text(words))
     
         words = Word.apply_offset(words, offset)
@@ -253,7 +259,8 @@ class OnlineASR:
         
         confirmed_words = self.h_buffer.confirmed_words
         if confirmed_words:
-            ff_time = confirmed_words[-1].end
+            # fast forward to the end of the last confirmed word + margin to compensate alignment inaccuracy
+            ff_time = confirmed_words[-1].end + FAST_FORWARD_TIME_MARGIN
             logger.debug("Fast forwarding audio buffer to: {:.2f}", ff_time)
             self.audio_buffer.fast_forward(ff_time)
 
