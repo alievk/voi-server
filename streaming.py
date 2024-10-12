@@ -269,7 +269,10 @@ class OnlineASR:
             silence_time = buffer_duration
     
         confirmed_words, unconfirmed_words = self.h_buffer.update(words)
-        
+
+        if finalize:
+            self.h_buffer.clear()
+            
         if confirmed_words:
             # fast forward to the middle of the last confirmed word and the first unconfirmed word
             # it's less likely to cut the current utterance by mistake

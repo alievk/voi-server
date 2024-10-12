@@ -53,7 +53,7 @@ class WavSaver:
 
 
 class WebmToPcmConverter:
-    def __init__(self, audio_callback, chunk_size_ms=1000, save_audio_path=None):
+    def __init__(self, audio_callback, chunk_size_ms=1000):
         self.ffmpeg_process = None
         self.input_queue = multiprocessing.Queue()
         self.output_queue = multiprocessing.Queue()
@@ -61,8 +61,6 @@ class WebmToPcmConverter:
         self.chunk_size = int(chunk_size_ms / 1000 * SAMPLING_RATE * 2)
         self.running = False
         self.threads = []
-        self.audio_saver = None
-        self.save_audio_path = save_audio_path or f"logs/audio/incoming-{get_timestamp()}.wav"
 
     def start(self):
         if self.running:
@@ -77,10 +75,11 @@ class WebmToPcmConverter:
         ]
         for thread in self.threads:
             thread.start()
-            
-        self.audio_saver = WavSaver(self.save_audio_path)
 
     def put(self, chunk):
+        if not self.running:
+            return
+
         self.input_queue.put(chunk)
 
     def _ffmpeg_in_pipe(self):
@@ -109,11 +108,10 @@ class WebmToPcmConverter:
         while self.running:
             s16le_chunk = self.output_queue.get()
             if s16le_chunk is None:
+                asyncio.run_coroutine_threadsafe(self.audio_callback(None), loop)
                 break
             f32le_chunk = convert_s16le_to_f32le(s16le_chunk)
             asyncio.run_coroutine_threadsafe(self.audio_callback(f32le_chunk), loop)
-            if self.audio_saver:
-                self.audio_saver.write(s16le_chunk)
 
     def _start_ffmpeg_process(self):
         return subprocess.Popen([
@@ -127,13 +125,13 @@ class WebmToPcmConverter:
         ], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
     def stop(self):
+        if not self.running:
+            return
+
         self.running = False
 
         self.input_queue.put(None)
         self.output_queue.put(None)
-
-        if self.audio_saver:
-            self.audio_saver.close()
 
         if self.ffmpeg_process:
             self.ffmpeg_process.kill()
@@ -142,21 +140,40 @@ class WebmToPcmConverter:
         for thread in self.threads:
             thread.join(timeout=5)
 
+    def is_running(self):
+        return self.running
+
 
 class Conversation:
+    SILENCE=0
+    SPEECH=1
+
     def __init__(self, handle_transcription_cb=None):
         self.handle_transcription_cb = handle_transcription_cb
-
+        self.user_status = Conversation.SILENCE
+        self.silence_time_threshold = 2
+        self.speech_id = 0
         self.asr = OnlineASR()
 
+        assert self.silence_time_threshold < self.asr.audio_buffer.min_duration, f"Current limitation is that silence time threshold must be less than audio buffer min duration {self.asr.audio_buffer.min_duration}."
+
     async def handle_audio(self, audio_chunk):
-        result = self.asr.process_chunk(audio_chunk)
+        finalize = audio_chunk is None
+        result = self.asr.process_chunk(audio_chunk, finalize=finalize)
 
-        # TODO: detect speech_id
-        result["speech_id"] = 0
+        if result:
+            result["speech_id"] = self.speech_id
 
-        if result and self.handle_transcription_cb:
-            await self.handle_transcription_cb(result)
+            # if self.user_status == Conversation.SILENCE and result["unconfirmed_text"]:
+            #     self.user_status = Conversation.SPEECH
+            #     logger.info("User started to speak")
+            # elif self.user_status == Conversation.SPEECH and result["silence_time"] > self.silence_time_threshold:
+            #     self.user_status = Conversation.SILENCE
+            #     self.speech_id += 1
+            #     logger.info("User stopped to speak")
+
+            if self.handle_transcription_cb:
+                await self.handle_transcription_cb(result)
 
 
 async def handle_connection(websocket):
@@ -165,8 +182,16 @@ async def handle_connection(websocket):
 
     logger.info("New connection is started")
 
+    def convert_f32le_to_s16le(buffer):
+        return (buffer * 32768.0).astype(np.int16).tobytes()
+
     async def handle_audio(audio_chunk):
+        if audio_chunk is None:
+            await conversation.handle_audio(None)
+            return
+
         await conversation.handle_audio(audio_chunk)
+        audio_saver.write(convert_f32le_to_s16le(audio_chunk))
 
     async def handle_transcription(data):
         try:
@@ -175,7 +200,13 @@ async def handle_connection(websocket):
         except Exception as e:
             logger.error(f"Error sending transcription: {e}")
 
-    converter = WebmToPcmConverter(handle_audio, save_audio_path=f"{log_dir}/incoming.wav")
+    save_audio_path = f"{log_dir}/incoming.wav"
+    audio_saver = WavSaver(save_audio_path)
+
+    converter = WebmToPcmConverter(
+        handle_audio,
+        chunk_size_ms=1000
+    )
     converter.start()
 
     conversation = Conversation(handle_transcription)
@@ -184,6 +215,10 @@ async def handle_connection(websocket):
         async for message in websocket:
             if isinstance(message, bytes):
                 converter.put(message)
+            elif message == 'START_RECORDING':
+                converter.start()
+            elif message == 'STOP_RECORDING':
+                converter.stop()
             elif message == 'END_CONVERSATION':
                 logger.info("Received END_CONVERSATION message")
                 break
@@ -195,6 +230,7 @@ async def handle_connection(websocket):
     finally:
         logger.info("Stopping audio converter")
         converter.stop()
+        audio_saver.close()
     logger.info("Connection is done")
 
 
