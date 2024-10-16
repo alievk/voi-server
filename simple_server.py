@@ -52,7 +52,7 @@ class WavSaver:
             self.wav_file.close()
 
 
-class WebmToPcmConverter:
+class AudioInputStream:
     def __init__(self, audio_callback, chunk_size_ms=1000):
         self.ffmpeg_process = None
         self.input_queue = multiprocessing.Queue()
@@ -203,22 +203,22 @@ async def handle_connection(websocket):
     save_audio_path = f"{log_dir}/incoming.wav"
     audio_saver = WavSaver(save_audio_path)
 
-    converter = WebmToPcmConverter(
+    audio_input_stream = AudioInputStream(
         handle_audio,
         chunk_size_ms=1000
     )
-    converter.start()
+    audio_input_stream.start()
 
     conversation = Conversation(handle_transcription)
 
     try:
         async for message in websocket:
             if isinstance(message, bytes):
-                converter.put(message)
+                audio_input_stream.put(message)
             elif message == 'START_RECORDING':
-                converter.start()
+                audio_input_stream.start()
             elif message == 'STOP_RECORDING':
-                converter.stop()
+                audio_input_stream.stop()
             elif message == 'END_CONVERSATION':
                 logger.info("Received END_CONVERSATION message")
                 break
@@ -229,7 +229,7 @@ async def handle_connection(websocket):
         logger.info("WebSocket connection closed unexpectedly")
     finally:
         logger.info("Stopping audio converter")
-        converter.stop()
+        audio_input_stream.stop()
         audio_saver.close()
     logger.info("Connection is done")
 
