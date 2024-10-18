@@ -154,7 +154,7 @@ class BaseLLMAgent:
         self.output_json = output_json
 
     def completion(self, context):
-        assert isinstance(context, ConversationContext)
+        assert isinstance(context, ConversationContext), f"Invalid context type {context.__class__}"
         
         messages = [
             {
@@ -163,16 +163,7 @@ class BaseLLMAgent:
             }
         ]
 
-        conversation_log = context.to_prompt()
-        user_content = f"Conversation log:\n{conversation_log}\n\n"
-        user_content += self._extra_context_to_text(context)
-
-        messages.append(
-            {
-                "role": "user",
-                "content": user_content
-            }
-        )
+        messages += context.get_messages(include=["role", "content"])
         
         response = litellm.completion(
             model=self.model_name, 
@@ -224,64 +215,57 @@ class ResponseLLMAgent(BaseLLMAgent):
 
 
 class ConversationContext:
-    allowed_speakers = ["AGENT", "PERSON", "PERSON_TRANSCRIPT"]
-
     def __init__(self):
         self.messages = []
+        self.user_transcription = ""
         self.lock = threading.Lock()
 
     def add_message(self, message, text_compare_f=None):
         with self.lock:
-            assert message["speaker"].upper() in self.allowed_speakers, f"Unknown speaker {message['speaker'].upper()}"
+            assert message["role"].lower() in ["assistant", "user"], f"Unknown role {message['role']}"
 
-            if not self.messages or self.messages[-1]["speaker"].upper() != message["speaker"].upper():
+            if not self.messages or self.messages[-1]["role"].lower() != message["role"].lower():
                 self.messages.append(message)
                 return True
 
             if text_compare_f is None:
                 text_compare_f = lambda x, y: x == y
 
-            if not text_compare_f(self.messages[-1]["text"], message["text"]):
-                self.messages[-1]["text"] = message["text"]
+            if not text_compare_f(self.messages[-1]["content"], message["content"]):
+                self.messages[-1]["content"] = message["content"]
                 return True
 
             return False
 
-    def finalize_transcription(self):
-        if self.messages and self.messages[-1]["speaker"].upper() == "PERSON_TRANSCRIPT":
-            self.messages[-1]["speaker"] = "PERSON"
+    def get_messages(self, include=None):
+        if include is None:
+            return self.messages
 
-    def transcription_is_finalized(self):
-        return self.messages and self.messages[-1]["speaker"].upper() == "PERSON"
+        return [{k: v for k, v in msg.items() if k in include} for msg in self.messages]
 
-    def to_prompt(self, check_format=True):
+    def to_text(self):
         if not self.messages:
             return ""
 
-        assert not check_format or "PERSON" in self.messages[-1]["speaker"].upper(), f"The last speaker must be a person, but it is {self.messages[-1]['speaker'].upper()}"
-
         lines = []
-        last_speaker = None
         for item in self.messages:
             if not "time" in item:
-                item["time"] = datetime.now()
-            time_str = item["time"].strftime("%H:%M:%S")
+                time_str = "00:00:00"
+            else:
+                time_str = item["time"].strftime("%H:%M:%S")
             
-            speaker = item["speaker"].upper()
-            text = item["text"]
-
-            assert not check_format or last_speaker is None or last_speaker != speaker, f"Speakers must interleave ({last_speaker=}, {speaker=})."
+            role = item["role"].lower()
+            content = item["content"]
             
-            lines.append(f"{time_str} | {speaker} - {text}")
-            last_speaker = speaker
+            lines.append(f"{time_str} | {role} - {content}")
         
         return "\n".join(lines)
 
     def to_json(self):
         return [
             {
-                "speaker": msg["speaker"],
-                "text": msg["text"],
+                "role": msg["role"],
+                "content": msg["content"],
                 "time": msg["time"].strftime("%H:%M:%S") if "time" in msg else None
             }
             for msg in self.messages
@@ -301,11 +285,12 @@ class Conversation:
         self._response_agent_loop = threading.Thread(target=self._response_agent_loop, name='response-agent-loop', daemon=True)
         self._response_agent_loop.start()
         self.running = True
+        self.last_agent_message = None
 
     def greeting(self):
         message = {
-            "speaker": "agent",
-            "text": "Hello! I'm Jessica. How can I help?",
+            "role": "assistant",
+            "content": "Hello! I'm Jessica. How can I help?",
             "time": datetime.now()
         }
         self._update_conversation_context(message)
@@ -321,8 +306,8 @@ class Conversation:
             if context_changed:
                 self._transcription_changed.set()
 
-        if finalize:
-            self.conversation_context.finalize_transcription()
+        if finalize and self.last_agent_message:
+            self._update_conversation_context(self.last_agent_message)
 
     def _create_message_from_transcription(self, transcription):
         confirmed = transcription["confirmed_text"]
@@ -333,13 +318,13 @@ class Conversation:
             text += f" [{unconfirmed}]".strip()
         
         return {
-            "speaker": "PERSON_TRANSCRIPT",
-            "text": text,
+            "role": "user",
+            "content": text,
             "time": datetime.now()
         }
 
     def _update_conversation_context(self, message):
-        compare_ignore_case = lambda x, y: x.lower() == y.lower()
+        compare_ignore_case = lambda x, y: x.strip().lower() == y.strip().lower()
         context_changed = self.conversation_context.add_message(message, text_compare_f=compare_ignore_case)
         if context_changed:
             asyncio.run_coroutine_threadsafe(self.context_changed_cb(self.conversation_context), self._event_loop)
@@ -353,18 +338,15 @@ class Conversation:
             if not self.running:
                 break
             
-            logger.error("Context changed:\n{}", self.conversation_context.to_prompt(check_format=False))
+            logger.error("Context changed:\n{}", self.conversation_context.to_text())
             response = self._response_agent.completion(self.conversation_context)
             logger.error("Agent response:\n{}", response["response"])
 
             self.last_agent_message = {
-                "speaker": "agent",
-                "text": response["response"],
+                "role": "assistant",
+                "content": response["response"],
                 "time": datetime.now()
             }
-
-            if self.conversation_context.transcription_is_finalized():
-                self._update_conversation_context(self.last_agent_message)
 
     def shutdown(self):
         self.running = False
