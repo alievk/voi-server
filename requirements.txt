@@ -15,3 +15,5 @@ ffmpeg
 librosa
 
 git+https://github.com/alievk/whisperX.git@ali
+
+litellm

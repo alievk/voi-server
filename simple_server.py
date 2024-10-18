@@ -15,7 +15,10 @@ import torch
 import websockets
 from loguru import logger
 
+import litellm
+
 from streaming import OnlineASR, SAMPLING_RATE
+from prompts import response_agent_system_prompt
 
 
 class WavSaver:
@@ -144,36 +147,229 @@ class AudioInputStream:
         return self.running
 
 
-class Conversation:
-    SILENCE=0
-    SPEECH=1
+class BaseLLMAgent:
+    def __init__(self, model_name, system_prompt, output_json=False):
+        self.model_name = model_name
+        self.system_prompt = system_prompt
+        self.output_json = output_json
 
-    def __init__(self, handle_transcription_cb=None):
-        self.handle_transcription_cb = handle_transcription_cb
-        self.user_status = Conversation.SILENCE
-        self.silence_time_threshold = 2
+    def completion(self, context):
+        assert isinstance(context, ConversationContext)
+        
+        messages = [
+            {
+              "role": "system",
+              "content": self.system_prompt
+            }
+        ]
+
+        conversation_log = context.to_prompt()
+        user_content = f"Conversation log:\n{conversation_log}\n\n"
+        user_content += self._extra_context_to_text(context)
+
+        messages.append(
+            {
+                "role": "user",
+                "content": user_content
+            }
+        )
+        
+        response = litellm.completion(
+            model=self.model_name, 
+            messages=messages, 
+            response_format={"type": "json_object"} if self.output_json else None,
+            temperature=0.5
+        )
+
+        r_content = response.choices[0].message.content
+        logger.debug("Response content: {}", r_content)
+
+        if self.output_json:
+            response = json.loads(r_content)
+        else:
+            response = r_content
+
+        return {
+            "response": response,
+            "messages": messages
+        }
+
+    def _extra_context_to_text(self, context):
+        # Override this in child class
+        return ""
+
+
+class ResponseLLMAgent(BaseLLMAgent):
+    default_response = ""
+    
+    def __init__(self):
+        super().__init__(model_name="openai/openai-gpt-4o-mini", system_prompt=response_agent_system_prompt, output_json=False)
+
+    # def _extra_context_to_text(self, context):
+    #     assert "detection_agent_state" in context, "This agent requires detection agent's current state"
+    #     assert "clarification_agent_state" in context, "This agent requires clarification agent's current state"
+    #     d_state = context["detection_agent_state"]
+    #     c_state = context["clarification_agent_state"]
+    #     text = "Detection agent state:\nAction: {}\nReason: {}\n\n".format(d_state["action"], d_state["reason"])
+    #     text += "Clarification agent state:\nHas question: {}\nQuestion: {}\n\n".format(c_state["has_question"], c_state["question"])
+    #     return text
+
+    def completion(self, context, *args, **kwargs):
+        result = super().completion(context, *args, **kwargs)
+
+        if result["response"] is None:
+            result["response"] = self.default_response
+
+        return result
+
+
+class ConversationContext:
+    allowed_speakers = ["AGENT", "PERSON", "PERSON_TRANSCRIPT"]
+
+    def __init__(self):
+        self.messages = []
+        self.lock = threading.Lock()
+
+    def add_message(self, message, text_compare_f=None):
+        with self.lock:
+            assert message["speaker"].upper() in self.allowed_speakers, f"Unknown speaker {message['speaker'].upper()}"
+
+            if not self.messages or self.messages[-1]["speaker"].upper() != message["speaker"].upper():
+                self.messages.append(message)
+                return True
+
+            if text_compare_f is None:
+                text_compare_f = lambda x, y: x == y
+
+            if not text_compare_f(self.messages[-1]["text"], message["text"]):
+                self.messages[-1]["text"] = message["text"]
+                return True
+
+            return False
+
+    def finalize_transcription(self):
+        if self.messages and self.messages[-1]["speaker"].upper() == "PERSON_TRANSCRIPT":
+            self.messages[-1]["speaker"] = "PERSON"
+
+    def transcription_is_finalized(self):
+        return self.messages and self.messages[-1]["speaker"].upper() == "PERSON"
+
+    def to_prompt(self, check_format=True):
+        if not self.messages:
+            return ""
+
+        assert not check_format or "PERSON" in self.messages[-1]["speaker"].upper(), f"The last speaker must be a person, but it is {self.messages[-1]['speaker'].upper()}"
+
+        lines = []
+        last_speaker = None
+        for item in self.messages:
+            if not "time" in item:
+                item["time"] = datetime.now()
+            time_str = item["time"].strftime("%H:%M:%S")
+            
+            speaker = item["speaker"].upper()
+            text = item["text"]
+
+            assert not check_format or last_speaker is None or last_speaker != speaker, f"Speakers must interleave ({last_speaker=}, {speaker=})."
+            
+            lines.append(f"{time_str} | {speaker} - {text}")
+            last_speaker = speaker
+        
+        return "\n".join(lines)
+
+    def to_json(self):
+        return [
+            {
+                "speaker": msg["speaker"],
+                "text": msg["text"],
+                "time": msg["time"].strftime("%H:%M:%S") if "time" in msg else None
+            }
+            for msg in self.messages
+        ]
+
+
+class Conversation:
+    def __init__(self, context_changed_cb=None):
+        self.context_changed_cb = context_changed_cb
         self.speech_id = 0
         self.asr = OnlineASR()
+        self.conversation_context = ConversationContext()
 
-        assert self.silence_time_threshold < self.asr.audio_buffer.min_duration, f"Current limitation is that silence time threshold must be less than audio buffer min duration {self.asr.audio_buffer.min_duration}."
+        self._response_agent = ResponseLLMAgent()
+        self._transcription_changed = threading.Event()
+        self._event_loop = asyncio.get_event_loop()
+        self._response_agent_loop = threading.Thread(target=self._response_agent_loop, name='response-agent-loop', daemon=True)
+        self._response_agent_loop.start()
+        self.running = True
 
-    async def handle_audio(self, audio_chunk):
+    def greeting(self):
+        message = {
+            "speaker": "agent",
+            "text": "Hello! I'm Jessica. How can I help?",
+            "time": datetime.now()
+        }
+        self._update_conversation_context(message)
+
+    @logger.catch
+    async def handle_input_audio(self, audio_chunk):
         finalize = audio_chunk is None
-        result = self.asr.process_chunk(audio_chunk, finalize=finalize)
+        asr_result = self.asr.process_chunk(audio_chunk, finalize=finalize)
 
-        if result:
-            result["speech_id"] = self.speech_id
+        if asr_result and (asr_result["confirmed_text"] or asr_result["unconfirmed_text"]):
+            message = self._create_message_from_transcription(asr_result)
+            context_changed = self._update_conversation_context(message)
+            if context_changed:
+                self._transcription_changed.set()
 
-            # if self.user_status == Conversation.SILENCE and result["unconfirmed_text"]:
-            #     self.user_status = Conversation.SPEECH
-            #     logger.info("User started to speak")
-            # elif self.user_status == Conversation.SPEECH and result["silence_time"] > self.silence_time_threshold:
-            #     self.user_status = Conversation.SILENCE
-            #     self.speech_id += 1
-            #     logger.info("User stopped to speak")
+        if finalize:
+            self.conversation_context.finalize_transcription()
 
-            if self.handle_transcription_cb:
-                await self.handle_transcription_cb(result)
+    def _create_message_from_transcription(self, transcription):
+        confirmed = transcription["confirmed_text"]
+        unconfirmed = transcription["unconfirmed_text"]
+        
+        text = confirmed or ""
+        if unconfirmed:
+            text += f" [{unconfirmed}]".strip()
+        
+        return {
+            "speaker": "PERSON_TRANSCRIPT",
+            "text": text,
+            "time": datetime.now()
+        }
+
+    def _update_conversation_context(self, message):
+        compare_ignore_case = lambda x, y: x.lower() == y.lower()
+        context_changed = self.conversation_context.add_message(message, text_compare_f=compare_ignore_case)
+        if context_changed:
+            asyncio.run_coroutine_threadsafe(self.context_changed_cb(self.conversation_context), self._event_loop)
+        return context_changed
+
+    def _response_agent_loop(self):
+        while True:
+            self._transcription_changed.wait()
+            self._transcription_changed.clear()
+
+            if not self.running:
+                break
+            
+            logger.error("Context changed:\n{}", self.conversation_context.to_prompt(check_format=False))
+            response = self._response_agent.completion(self.conversation_context)
+            logger.error("Agent response:\n{}", response["response"])
+
+            self.last_agent_message = {
+                "speaker": "agent",
+                "text": response["response"],
+                "time": datetime.now()
+            }
+
+            if self.conversation_context.transcription_is_finalized():
+                self._update_conversation_context(self.last_agent_message)
+
+    def shutdown(self):
+        self.running = False
+        self._transcription_changed.set()
+        self._response_agent_loop.join(timeout=5)
 
 
 async def handle_connection(websocket):
@@ -185,31 +381,39 @@ async def handle_connection(websocket):
     def convert_f32le_to_s16le(buffer):
         return (buffer * 32768.0).astype(np.int16).tobytes()
 
-    async def handle_audio(audio_chunk):
+    @logger.catch
+    async def handle_input_audio(audio_chunk):
         if audio_chunk is None:
-            await conversation.handle_audio(None)
+            await conversation.handle_input_audio(None)
             return
 
-        await conversation.handle_audio(audio_chunk)
+        await conversation.handle_input_audio(audio_chunk)
         audio_saver.write(convert_f32le_to_s16le(audio_chunk))
 
-    async def handle_transcription(data):
-        try:
-            data = json.dumps(data)
-            await websocket.send(data)
-        except Exception as e:
-            logger.error(f"Error sending transcription: {e}")
+    @logger.catch
+    async def handle_context_changed(context):
+        assert context.messages, "Context must have messages"
+        context_json = context.to_json()
+
+        message = context_json[-1]
+        message["message_id"] = len(context_json) - 1
+
+        logger.info("Sending message: {}", message)
+        await websocket.send(json.dumps(message))
 
     save_audio_path = f"{log_dir}/incoming.wav"
     audio_saver = WavSaver(save_audio_path)
 
     audio_input_stream = AudioInputStream(
-        handle_audio,
+        handle_input_audio,
         chunk_size_ms=1000
     )
     audio_input_stream.start()
 
-    conversation = Conversation(handle_transcription)
+    conversation = Conversation(
+        context_changed_cb=handle_context_changed,
+    )
+    conversation.greeting()
 
     try:
         async for message in websocket:
@@ -228,14 +432,18 @@ async def handle_connection(websocket):
     except websockets.exceptions.ConnectionClosed:
         logger.info("WebSocket connection closed unexpectedly")
     finally:
-        logger.info("Stopping audio converter")
+        logger.info("Cleaning up resources")
         audio_input_stream.stop()
         audio_saver.close()
+        conversation.shutdown()
     logger.info("Connection is done")
 
 
 ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
 ssl_context.load_cert_chain('localhost+2.pem', 'localhost+2-key.pem')
+
+litellm.api_base = "http://13.43.85.180:4000"
+litellm.api_key = "sk-1234"
 
 
 def get_timestamp():
