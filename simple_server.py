@@ -305,7 +305,7 @@ class Conversation:
         self._transcription_changed = threading.Event()
         self._event_loop = asyncio.get_event_loop()
         self._response_agent_loop = threading.Thread(target=self._response_agent_loop, name='response-agent-loop', daemon=True)
-        self._response_agent_loop.start()
+        # self._response_agent_loop.start()
         self.running = True
         self.last_agent_message = None
 
@@ -319,17 +319,26 @@ class Conversation:
 
     @logger.catch
     async def handle_input_audio(self, audio_chunk):
-        finalize = audio_chunk is None
-        asr_result = self.asr.process_chunk(audio_chunk, finalize=finalize)
+        end_of_audio = audio_chunk is None
+        asr_result = self.asr.process_chunk(audio_chunk, finalize=end_of_audio)
 
         if asr_result and (asr_result["confirmed_text"] or asr_result["unconfirmed_text"]):
             message = self._create_message_from_transcription(asr_result)
             context_changed = self._update_conversation_context(message)
-            if context_changed:
-                self._transcription_changed.set()
+            # if context_changed:
+            #     self._transcription_changed.set()
 
-        if finalize and self.last_agent_message:
-            self._update_conversation_context(self.last_agent_message)
+        if end_of_audio:
+            need_response = self.conversation_context.messages and self.conversation_context.messages[-1]["role"] == "user"
+            if need_response:
+                logger.error("Context:\n{}", self.conversation_context.to_text())
+                response = self._response_agent.completion(self.conversation_context)
+                agent_response = {
+                    "role": "assistant",
+                    "content": response["response"],
+                    "time": datetime.now()
+                }
+                self._update_conversation_context(agent_response)
 
     def _create_message_from_transcription(self, transcription):
         confirmed = transcription["confirmed_text"]
@@ -372,8 +381,8 @@ class Conversation:
 
     def shutdown(self):
         self.running = False
-        self._transcription_changed.set()
-        self._response_agent_loop.join(timeout=5)
+        # self._transcription_changed.set()
+        # self._response_agent_loop.join(timeout=5)
 
 
 async def handle_connection(websocket):

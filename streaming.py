@@ -10,7 +10,7 @@ import whisperx
 
 SAMPLING_RATE = 16000 # Hz
 
-MIN_AUDIO_BUFFER_DURATION = 3 # seconds
+MIN_AUDIO_BUFFER_DURATION = 1 # seconds
 MAX_AUDIO_BUFFER_DURATION = 15 # seconds    
 
 FAST_FORWARD_TIME_MARGIN = 0.1 # seconds
