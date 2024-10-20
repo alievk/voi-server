@@ -284,7 +284,7 @@ class Conversation:
     def __init__(self, context_changed_cb=None):
         self.context_changed_cb = context_changed_cb
         self.speech_id = 0
-        self.asr = OnlineASR()
+        self.asr = OnlineASR(cached=True)
         self.conversation_context = ConversationContext()
 
         self._response_agent = ResponseLLMAgent()

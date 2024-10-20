@@ -177,20 +177,29 @@ class HypothesisBuffer:
 
 class OfflineASR:
     word_sep = " "
+    _cached_ars_model = None
+
+    @staticmethod
+    def get_model(cached=True, language=None):
+        if cached and OfflineASR._cached_ars_model:
+            return OfflineASR._cached_ars_model
+
+        OfflineASR._cached_ars_model = whisperx.load_model(
+            "large-v2",
+            device="cuda", 
+            compute_type="float16", 
+            language=language,
+            # vad_options={'vad_onset': 0.8, 'vad_offset': 0.8}
+            # asr_options={"initial_prompt": "He thoughtfully said: "}
+            )
+        return OfflineASR._cached_ars_model
     
-    def __init__(self, language):
+    def __init__(self, language, cached=False):
         self.device = "cuda"
         self.batch_size = 1 # reduce if low on GPU mem
         self.language = language
 
-        self.model = whisperx.load_model(
-            "large-v2", 
-            self.device, 
-            compute_type="float16", 
-            language=self.language,
-            # vad_options={'vad_onset': 0.8, 'vad_offset': 0.8}
-            # asr_options={"initial_prompt": "He thoughtfully said: "}
-        )
+        self.model = OfflineASR.get_model(cached=cached, language=language)
         
         self.model_a, self.align_metadata = whisperx.load_align_model(
             language_code=self.language, 
@@ -220,11 +229,11 @@ class OfflineASR:
 
 
 class OnlineASR:
-    def __init__(self, context_length=ASR_CONTEXT_LENGTH):
+    def __init__(self, context_length=ASR_CONTEXT_LENGTH, language='en', cached=False):
         self.context_length = context_length
         self.audio_buffer = None
         self.h_buffer = None
-        self.asr = OfflineASR('en')
+        self.asr = OfflineASR(language, cached=cached)
         
         self.reset()
 
