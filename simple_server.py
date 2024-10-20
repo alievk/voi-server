@@ -18,7 +18,7 @@ from loguru import logger
 import litellm
 
 from streaming import OnlineASR, SAMPLING_RATE
-from prompts import response_agent_system_prompt
+from prompts import response_agent_system_prompt, response_agent_greeting_message, response_agent_examples
 
 
 class WavSaver:
@@ -156,9 +156,10 @@ class AudioInputStream:
 
 
 class BaseLLMAgent:
-    def __init__(self, model_name, system_prompt, output_json=False):
+    def __init__(self, model_name, system_prompt, examples=None, output_json=False):
         self.model_name = model_name
         self.system_prompt = system_prompt
+        self.examples = examples
         self.output_json = output_json
 
     def completion(self, context):
@@ -171,7 +172,14 @@ class BaseLLMAgent:
             }
         ]
 
+        if self.examples:
+            for example in self.examples:
+                messages.append({"role": "user", "content": example["user"]})
+                messages.append({"role": "assistant", "content": example["assistant"]})
+
         messages += context.get_messages(include_fields=["role", "content"])
+
+        logger.error("Messages:\n{}", self._messages_to_text(messages))
         
         response = litellm.completion(
             model=self.model_name, 
@@ -193,16 +201,31 @@ class BaseLLMAgent:
             "messages": messages
         }
 
+    @staticmethod
+    def format_transcription(confirmed, unconfirmed):
+        text = confirmed
+        if unconfirmed:
+            text += f" ({unconfirmed})"
+        return text.strip()
+
     def _extra_context_to_text(self, context):
         # Override this in child class
         return ""
+
+    def _messages_to_text(self, messages):
+        return "\n".join([f"{msg['role']}: {msg['content']}" for msg in messages])
 
 
 class ResponseLLMAgent(BaseLLMAgent):
     default_response = ""
     
     def __init__(self):
-        super().__init__(model_name="openai/openai-gpt-4o-mini", system_prompt=response_agent_system_prompt, output_json=False)
+        super().__init__(
+            model_name="openai/openai-gpt-4o-mini", 
+            system_prompt=response_agent_system_prompt, 
+            examples=response_agent_examples,
+            output_json=False
+        )
 
     # def _extra_context_to_text(self, context):
     #     assert "detection_agent_state" in context, "This agent requires detection agent's current state"
@@ -312,7 +335,7 @@ class Conversation:
     def greeting(self):
         message = {
             "role": "assistant",
-            "content": "Hello! I'm Jessica. How can I help?",
+            "content": response_agent_greeting_message,
             "time": datetime.now()
         }
         self._update_conversation_context(message)
@@ -331,7 +354,6 @@ class Conversation:
         if end_of_audio:
             need_response = self.conversation_context.messages and self.conversation_context.messages[-1]["role"] == "user"
             if need_response:
-                logger.error("Context:\n{}", self.conversation_context.to_text())
                 response = self._response_agent.completion(self.conversation_context)
                 agent_response = {
                     "role": "assistant",
@@ -343,10 +365,8 @@ class Conversation:
     def _create_message_from_transcription(self, transcription):
         confirmed = transcription["confirmed_text"]
         unconfirmed = transcription["unconfirmed_text"]
-        
-        text = confirmed or ""
-        if unconfirmed:
-            text += f" [{unconfirmed}]".strip()
+
+        text = BaseLLMAgent.format_transcription(confirmed, unconfirmed)
         
         return {
             "role": "user",
