@@ -81,6 +81,7 @@ class AudioInputStream:
 
     def put(self, chunk):
         if not self.running:
+            logger.warning("Audio input stream is not running, skipping chunk")
             return
 
         self.input_queue.put(chunk)
@@ -94,15 +95,21 @@ class AudioInputStream:
             self.ffmpeg_process.stdin.flush()
 
     def _ffmpeg_out_pipe(self):
-        buffer = b''
+        buffer = bytearray()
         while self.running:
             pcm_chunk = self.ffmpeg_process.stdout.read(1024)
             if not pcm_chunk:
                 break
-            buffer += pcm_chunk
-            if len(buffer) >= self.chunk_size:
-                self.output_queue.put(buffer)
-                buffer = b''
+            
+            buffer.extend(pcm_chunk)
+            while len(buffer) >= self.chunk_size:
+                self.output_queue.put(bytes(buffer[:self.chunk_size]))
+                del buffer[:self.chunk_size]
+        
+        if buffer:
+            self.output_queue.put(bytes(buffer))
+
+        self.output_queue.put(None)
 
     def _audio_callback(self, loop):
         def convert_s16le_to_f32le(buffer):
@@ -400,10 +407,13 @@ async def handle_connection(websocket):
     try:
         async for message in websocket:
             if isinstance(message, bytes):
+                logger.debug("Received audio chunk of {} bytes", len(message))
                 audio_input_stream.put(message)
             elif message == 'START_RECORDING':
+                logger.info("Received START_RECORDING message")
                 audio_input_stream.start()
             elif message == 'STOP_RECORDING':
+                logger.info("Received STOP_RECORDING message")
                 audio_input_stream.stop()
             elif message == 'END_CONVERSATION':
                 logger.info("Received END_CONVERSATION message")
