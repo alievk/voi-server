@@ -171,7 +171,7 @@ class BaseLLMAgent:
             }
         ]
 
-        messages += context.get_messages(include=["role", "content"])
+        messages += context.get_messages(include_fields=["role", "content"])
         
         response = litellm.completion(
             model=self.model_name, 
@@ -225,7 +225,6 @@ class ResponseLLMAgent(BaseLLMAgent):
 class ConversationContext:
     def __init__(self):
         self.messages = []
-        self.user_transcription = ""
         self.lock = threading.Lock()
 
     def add_message(self, message, text_compare_f=None):
@@ -233,6 +232,8 @@ class ConversationContext:
             assert message["role"].lower() in ["assistant", "user"], f"Unknown role {message['role']}"
 
             if not self.messages or self.messages[-1]["role"].lower() != message["role"].lower():
+                message["id"] = len(self.messages)
+                message["handled"] = False
                 self.messages.append(message)
                 return True
 
@@ -241,15 +242,28 @@ class ConversationContext:
 
             if not text_compare_f(self.messages[-1]["content"], message["content"]):
                 self.messages[-1]["content"] = message["content"]
+                self.messages[-1]["handled"] = False
                 return True
 
             return False
 
-    def get_messages(self, include=None):
-        if include is None:
-            return self.messages
+    def get_messages(self, include_fields=None, filter=None):
+        if include_fields is None:
+            messages = self.messages
+        else:
+            messages = [{k: v for k, v in msg.items() if k in include_fields} for msg in self.messages]
 
-        return [{k: v for k, v in msg.items() if k in include} for msg in self.messages]
+        if filter:
+            messages = [msg for msg in messages if filter(msg)]
+
+        return messages
+
+    def update_message(self, id, **kwargs):
+        for msg in self.messages:
+            if msg["id"] == id:
+                msg.update(kwargs)
+                return True
+        return False
 
     def to_text(self):
         if not self.messages:
@@ -269,15 +283,15 @@ class ConversationContext:
         
         return "\n".join(lines)
 
-    def to_json(self):
-        return [
-            {
-                "role": msg["role"],
-                "content": msg["content"],
-                "time": msg["time"].strftime("%H:%M:%S") if "time" in msg else None
-            }
-            for msg in self.messages
-        ]
+    def to_json(self, filter=None):
+        messages = self.get_messages(filter=filter)
+        return json.loads(json.dumps(messages, default=self._json_serializer))
+
+    @staticmethod
+    def _json_serializer(obj):
+        if isinstance(obj, datetime):
+            return obj.strftime("%H:%M:%S")
+        raise TypeError(f"Object of type {obj.__class__.__name__} is not JSON serializable")
 
 
 class Conversation:
@@ -379,14 +393,11 @@ async def handle_connection(websocket):
 
     @logger.catch
     async def handle_context_changed(context):
-        assert context.messages, "Context must have messages"
-        context_json = context.to_json()
-
-        message = context_json[-1]
-        message["message_id"] = len(context_json) - 1
-
-        logger.info("Sending message: {}", message)
-        await websocket.send(json.dumps(message))
+        messages = context.to_json(filter=lambda msg: not msg["handled"])
+        for msg in messages:
+            logger.info("Sending message: {}", msg)
+            await websocket.send(json.dumps(msg))
+            context.update_message(msg["id"], handled=True)
 
     save_audio_path = f"{log_dir}/incoming.wav"
     audio_saver = WavSaver(save_audio_path)
