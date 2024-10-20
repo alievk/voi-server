@@ -118,10 +118,12 @@ class AudioInputStream:
         while self.running:
             s16le_chunk = self.output_queue.get()
             if s16le_chunk is None:
-                asyncio.run_coroutine_threadsafe(self.audio_callback(None), loop)
                 break
+
             f32le_chunk = convert_s16le_to_f32le(s16le_chunk)
             asyncio.run_coroutine_threadsafe(self.audio_callback(f32le_chunk), loop)
+
+        asyncio.run_coroutine_threadsafe(self.audio_callback(None), loop)
 
     def _start_ffmpeg_process(self):
         return subprocess.Popen([
@@ -138,10 +140,7 @@ class AudioInputStream:
         if not self.running:
             return
 
-        self.running = False
-
         self.input_queue.put(None)
-        self.output_queue.put(None)
 
         if self.ffmpeg_process:
             self.ffmpeg_process.kill()
@@ -149,6 +148,8 @@ class AudioInputStream:
 
         for thread in self.threads:
             thread.join(timeout=5)
+
+        self.running = False
 
     def is_running(self):
         return self.running
@@ -372,12 +373,9 @@ async def handle_connection(websocket):
 
     @logger.catch
     async def handle_input_audio(audio_chunk):
-        if audio_chunk is None:
-            await conversation.handle_input_audio(None)
-            return
-
         await conversation.handle_input_audio(audio_chunk)
-        audio_saver.write(convert_f32le_to_s16le(audio_chunk))
+        if audio_chunk is not None:
+            audio_saver.write(convert_f32le_to_s16le(audio_chunk))
 
     @logger.catch
     async def handle_context_changed(context):
