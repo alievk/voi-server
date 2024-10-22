@@ -97,6 +97,7 @@ class AudioInputStream:
         while self.running:
             chunk = self.input_queue.get()
             if chunk is None:
+                self.ffmpeg_process.stdin.close()
                 break
             self.ffmpeg_process.stdin.write(chunk)
             self.ffmpeg_process.stdin.flush()
@@ -105,7 +106,8 @@ class AudioInputStream:
         buffer = bytearray()
         while self.running:
             pcm_chunk = self.ffmpeg_process.stdout.read(1024)
-            if not pcm_chunk:
+            if pcm_chunk == b'':
+                logger.debug("ffmpeg stdout: EOF")
                 break
             
             buffer.extend(pcm_chunk)
@@ -151,13 +153,13 @@ class AudioInputStream:
         self.input_queue.put(None)
 
         if self.ffmpeg_process:
-            self.ffmpeg_process.kill()
             self.ffmpeg_process.wait()
 
         for thread in self.threads:
             thread.join(timeout=5)
 
         self.running = False
+        logger.debug("Audio input stream is stopped")
 
     def is_running(self):
         return self.running
