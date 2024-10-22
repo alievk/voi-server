@@ -17,22 +17,25 @@ from loguru import logger
 
 import litellm
 
-from streaming import OnlineASR, SAMPLING_RATE
+from streaming import OnlineASR
+from tts import VoiceGenerator
 from prompts import response_agent_system_prompt, response_agent_greeting_message, response_agent_examples
+from audio import AudioOutputStream
 
 
 class WavSaver:
-    def __init__(self, filename, channels=1, sample_width=2, framerate=16000, buffer_size=1024*1024):
+    def __init__(self, filename, channels=1, sample_width=2, sample_rate=16000, buffer_size=1024*1024):
         self.filename = filename
         self.channels = channels
         self.sample_width = sample_width
-        self.framerate = framerate
+        self.sample_rate = sample_rate
         self.buffer_size = buffer_size
         self.wav_file = None
         self.buffer = b''
         self._create_wav_file()
 
     def write(self, chunk):
+        """ Input format is s16le """
         self.buffer += chunk
         if len(self.buffer) >= self.buffer_size:
             self._flush_buffer()
@@ -42,7 +45,7 @@ class WavSaver:
         self.wav_file = wave.open(os.path.join(self.filename), 'wb')
         self.wav_file.setnchannels(self.channels)
         self.wav_file.setsampwidth(self.sample_width)
-        self.wav_file.setframerate(self.framerate)
+        self.wav_file.setframerate(self.sample_rate)
 
     def _flush_buffer(self):
         if self.wav_file and self.buffer:
@@ -56,12 +59,15 @@ class WavSaver:
 
 
 class AudioInputStream:
-    def __init__(self, audio_callback, chunk_size_ms=1000):
+    def __init__(self, converted_audio_cb, chunk_size_ms=1000, input_sample_rate=16000, output_sample_rate=16000):
+        """ converted_audio_cb receives f32le audio chunks """
+        self.input_sample_rate = input_sample_rate
+        self.output_sample_rate = output_sample_rate
         self.ffmpeg_process = None
         self.input_queue = multiprocessing.Queue()
         self.output_queue = multiprocessing.Queue()
-        self.audio_callback = audio_callback
-        self.chunk_size = int(chunk_size_ms / 1000 * SAMPLING_RATE * 2)
+        self.converted_audio_cb = converted_audio_cb
+        self.chunk_size = int(chunk_size_ms / 1000 * self.output_sample_rate * 2)
         self.running = False
         self.threads = []
 
@@ -80,6 +86,7 @@ class AudioInputStream:
             thread.start()
 
     def put(self, chunk):
+        """ chunk is webm """
         if not self.running:
             logger.warning("Audio input stream is not running, skipping chunk")
             return
@@ -121,20 +128,21 @@ class AudioInputStream:
                 break
 
             f32le_chunk = convert_s16le_to_f32le(s16le_chunk)
-            asyncio.run_coroutine_threadsafe(self.audio_callback(f32le_chunk), loop)
+            asyncio.run_coroutine_threadsafe(self.converted_audio_cb(f32le_chunk), loop)
 
-        asyncio.run_coroutine_threadsafe(self.audio_callback(None), loop)
+        asyncio.run_coroutine_threadsafe(self.converted_audio_cb(None), loop)
 
     def _start_ffmpeg_process(self):
         return subprocess.Popen([
             'ffmpeg',
+            # '-ar', f'{self.input_sample_rate}',
             '-i', 'pipe:0',
             '-f', 's16le',
             '-acodec', 'pcm_s16le',
-            '-ar', f'{SAMPLING_RATE}',
+            '-ar', f'{self.output_sample_rate}',
             '-ac', '1',
             'pipe:1'
-        ], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        ], stdin=subprocess.PIPE, stdout=subprocess.PIPE)
 
     def stop(self):
         if not self.running:
@@ -318,10 +326,10 @@ class ConversationContext:
 
 
 class Conversation:
-    def __init__(self, context_changed_cb=None):
+    def __init__(self, asr, voice_generator, context_changed_cb=None):
+        self.asr = asr
+        self.voice_generator = voice_generator
         self.context_changed_cb = context_changed_cb
-        self.speech_id = 0
-        self.asr = OnlineASR(cached=True)
         self.conversation_context = ConversationContext()
 
         self._response_agent = ResponseLLMAgent()
@@ -342,6 +350,7 @@ class Conversation:
 
     @logger.catch
     async def handle_input_audio(self, audio_chunk):
+        """ audio_chunk is f32le """
         end_of_audio = audio_chunk is None
         asr_result = self.asr.process_chunk(audio_chunk, finalize=end_of_audio)
 
@@ -355,6 +364,7 @@ class Conversation:
             need_response = self.conversation_context.messages and self.conversation_context.messages[-1]["role"] == "user"
             if need_response:
                 response = self._response_agent.completion(self.conversation_context)
+                self.voice_generator.generate_async(text=response["response"])
                 agent_response = {
                     "role": "assistant",
                     "content": response["response"],
@@ -416,9 +426,10 @@ async def handle_connection(websocket):
 
     @logger.catch
     async def handle_input_audio(audio_chunk):
+        # audio_chunk is f32le
         await conversation.handle_input_audio(audio_chunk)
         if audio_chunk is not None:
-            audio_saver.write(convert_f32le_to_s16le(audio_chunk))
+            audio_input_saver.write(convert_f32le_to_s16le(audio_chunk))
 
     @logger.catch
     async def handle_context_changed(context):
@@ -428,24 +439,67 @@ async def handle_connection(websocket):
             await websocket.send(json.dumps(msg))
             context.update_message(msg["id"], handled=True)
 
-    save_audio_path = f"{log_dir}/incoming.wav"
-    audio_saver = WavSaver(save_audio_path)
+    @logger.catch
+    async def handle_generated_audio(audio_chunk):
+        # audio_chunk is f32le
+        if audio_chunk is None: # end of audio
+            audio_output_stream.flush()
+        else:
+            audio_output_stream.put(audio_chunk)
+            audio_output_saver.write(convert_f32le_to_s16le(audio_chunk))
+
+    @logger.catch
+    async def handle_webm_audio(audio_chunk):
+        # chunk is webm
+        if audio_chunk is not None and websocket.open:
+            await websocket.send(audio_chunk)
+
+    asr = OnlineASR(
+        cached=True
+    )
+
+    voice_generator = VoiceGenerator(
+        cached=True,
+        generated_audio_cb=handle_generated_audio
+    )
 
     audio_input_stream = AudioInputStream(
         handle_input_audio,
-        chunk_size_ms=1000
+        chunk_size_ms=1000,
+        input_sample_rate=16000, # client sends 16000
+        output_sample_rate=asr.sample_rate
     )
-    audio_input_stream.start()
-
+    
+    audio_output_stream = AudioOutputStream(
+        handle_webm_audio,
+        input_sample_rate=voice_generator.sample_rate,
+        output_sample_rate=24000 # client expects 16000
+    )
+    
     conversation = Conversation(
-        context_changed_cb=handle_context_changed,
+        asr=asr,
+        voice_generator=voice_generator,
+        context_changed_cb=handle_context_changed
     )
+
+    audio_input_saver = WavSaver(
+        f"{log_dir}/incoming.wav", 
+        sample_rate=audio_input_stream.output_sample_rate
+    )
+
+    audio_output_saver = WavSaver(
+        f"{log_dir}/outgoing.wav", 
+        sample_rate=voice_generator.sample_rate
+    )
+
+    audio_input_stream.start()
+    audio_output_stream.start()
+
     conversation.greeting()
 
     try:
         async for message in websocket:
             if isinstance(message, bytes):
-                logger.debug("Received audio chunk of {} bytes", len(message))
                 audio_input_stream.put(message)
             elif message == 'START_RECORDING':
                 logger.info("Received START_RECORDING message")
@@ -453,9 +507,6 @@ async def handle_connection(websocket):
             elif message == 'STOP_RECORDING':
                 logger.info("Received STOP_RECORDING message")
                 audio_input_stream.stop()
-            elif message == 'END_CONVERSATION':
-                logger.info("Received END_CONVERSATION message")
-                break
             else:
                 logger.warning(f"Received unexpected message: {message}")
         logger.info("WebSocket connection closed, checking timeout")
@@ -464,7 +515,9 @@ async def handle_connection(websocket):
     finally:
         logger.info("Cleaning up resources")
         audio_input_stream.stop()
-        audio_saver.close()
+        audio_output_stream.stop()
+        audio_input_saver.close()
+        audio_output_saver.close()
         conversation.shutdown()
     logger.info("Connection is done")
 

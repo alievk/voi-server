@@ -243,8 +243,8 @@ class OnlineASR:
 
     @logger.catch
     def process_chunk(self, chunk, finalize=False, return_audio=False):
-        sr = self.audio_buffer.sampling_rate
-
+        sr = self.sample_rate
+        
         if finalize:
             audio, buffer_offset = self.audio_buffer.clear()
             logger.debug("Flushing audio buffer of length: {:.2f}", len(audio) / sr)
@@ -305,4 +305,8 @@ class OnlineASR:
         logger.debug("Silence time: {:.2f}", silence_time)
 
         return result
+
+    @property
+    def sample_rate(self):
+        return self.audio_buffer.sampling_rate
 
