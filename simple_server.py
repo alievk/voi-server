@@ -163,7 +163,7 @@ async def handle_connection(websocket):
     audio_output_stream = AudioOutputStream(
         handle_webm_audio,
         input_sample_rate=voice_generator.sample_rate,
-        output_sample_rate=24000 # client expects 16000
+        output_sample_rate=voice_generator.sample_rate
     )
     
     conversation = Conversation(
