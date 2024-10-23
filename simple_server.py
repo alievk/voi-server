@@ -36,6 +36,7 @@ class Conversation:
     def greeting(self):
         message = ResponseLLMAgent.greeting_message()
         self._update_conversation_context(message)
+        self.voice_generator.generate_async(text=message["content"])
 
     @logger.catch
     async def handle_input_audio(self, audio_chunk):
