@@ -22,7 +22,6 @@ class VoiceGenerator:
         self.running = False
         self.text_queue = None
         self._event_loop = asyncio.get_event_loop()
-        self.start()
 
     def start(self):
         self.running = True

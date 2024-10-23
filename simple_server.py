@@ -4,6 +4,7 @@ import json
 import threading
 from collections import deque
 from datetime import datetime
+import signal
 
 import numpy as np
 import torch
@@ -182,6 +183,7 @@ async def handle_connection(websocket):
         sample_rate=voice_generator.sample_rate
     )
 
+    voice_generator.start()
     audio_input_stream.start()
     audio_output_stream.start()
 
@@ -204,11 +206,13 @@ async def handle_connection(websocket):
         logger.info("WebSocket connection closed unexpectedly")
     finally:
         logger.info("Cleaning up resources")
+        voice_generator.stop()
         audio_input_stream.stop()
         audio_output_stream.stop()
         audio_input_saver.close()
         audio_output_saver.close()
         conversation.shutdown()
+        
     logger.info("Connection is done")
 
 
@@ -223,8 +227,23 @@ def get_timestamp():
     return datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
 
 
+async def shutdown(signal, loop):
+    logger.info(f"Received exit signal {signal.name}...")
+    tasks = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
+    [task.cancel() for task in tasks]
+    await asyncio.gather(*tasks, return_exceptions=True)
+    loop.stop()
+
+
 async def main():
     logger.add(f"logs/server/server-{get_timestamp()}.log", rotation="100 MB")
+
+    loop = asyncio.get_running_loop()
+    signals = (signal.SIGHUP, signal.SIGTERM, signal.SIGINT)
+    for s in signals:
+        loop.add_signal_handler(
+            s, lambda s=s: asyncio.create_task(shutdown(s, loop))
+        )
 
     server = await websockets.serve(
         handle_connection,
@@ -234,8 +253,12 @@ async def main():
     )
     logger.info("WebSocket server started on wss://0.0.0.0:8765")
 
-    await server.wait_closed()
-    logger.info("Server shutdown complete")
+    try:
+        await server.wait_closed()
+    except asyncio.CancelledError:
+        logger.info("Server is shutting down...")
+    finally:
+        logger.info("Server shutdown complete")
 
 
 if __name__ == "__main__":

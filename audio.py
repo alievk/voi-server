@@ -146,7 +146,6 @@ class AudioInputStream:
             thread.join(timeout=5)
 
         self.running = False
-        logger.debug("Audio input stream is stopped")
 
     def is_running(self):
         return self.running
