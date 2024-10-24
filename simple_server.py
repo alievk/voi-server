@@ -35,9 +35,8 @@ class Conversation:
         self.last_agent_message = None
 
     def greeting(self):
-        message = ResponseLLMAgent.greeting_message()
-        self._update_conversation_context(message)
-        self.voice_generator.generate_async(text=message["content"])
+        _, message = self._update_conversation_context(ResponseLLMAgent.greeting_message())
+        self.voice_generator.generate_async(text=message["content"], id=message["id"])
 
     @logger.catch
     async def handle_input_audio(self, audio_chunk):
@@ -112,6 +111,8 @@ async def handle_connection(websocket):
 
     logger.info("New connection is started")
 
+    last_audio_id = 0
+
     def convert_f32le_to_s16le(buffer):
         return (buffer * 32768.0).astype(np.int16).tobytes()
 
@@ -148,19 +149,24 @@ async def handle_connection(websocket):
     @logger.catch
     async def handle_generated_audio(audio_chunk, id=None):
         # audio_chunk is f32le
+        nonlocal last_audio_id
         if audio_chunk is None: # end of audio
             audio_output_stream.flush()
         else:
-            audio_output_stream.put(audio_chunk, id=id)
+            audio_output_stream.put(audio_chunk)
             audio_output_saver.write(convert_f32le_to_s16le(audio_chunk))
+            assert id is not None
+            last_audio_id = id # hack
 
     @logger.catch
-    async def handle_webm_audio(audio_chunk, id=None):
+    async def handle_webm_audio(audio_chunk):
         # chunk is webm
+        nonlocal last_audio_id
         if audio_chunk is not None and websocket.open:
             metadata = {
                 "type": "audio",
-                "id": 0 if id is None else id
+                # FIXME: we can't get audio id here because we're using ffmpeg to convert source audio to webm and lose audio id
+                "id": last_audio_id
             }
             await websocket.send(serialize_message(metadata, audio_chunk))
 
