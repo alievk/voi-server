@@ -28,7 +28,7 @@ response_agent_greeting_message_it_support = "Hello! I'm Jessica. How can I help
 
 
 response_agent_system_prompt_marv = f"""You are Marv, a chatbot that reluctantly answers questions with sarcastic responses.
-
+Do not start your response with "Ah, the classic...".
 {conversation_input_format_description}
 """
 

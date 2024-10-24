@@ -131,7 +131,7 @@ class AudioInputStream:
             '-ar', f'{self.output_sample_rate}',
             '-ac', '1',
             'pipe:1'
-        ], stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+        ], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
     def stop(self):
         if not self.running:
