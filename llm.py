@@ -20,7 +20,7 @@ class ConversationContext:
                 message["id"] = len(self.messages)
                 message["handled"] = False
                 self.messages.append(message)
-                return True
+                return True, message
 
             if text_compare_f is None:
                 text_compare_f = lambda x, y: x == y
@@ -28,9 +28,9 @@ class ConversationContext:
             if not text_compare_f(self.messages[-1]["content"], message["content"]):
                 self.messages[-1]["content"] = message["content"]
                 self.messages[-1]["handled"] = False
-                return True
+                return True, self.messages[-1]
 
-            return False
+            return False, None
 
     def get_messages(self, include_fields=None, filter=None):
         if include_fields is None:
@@ -68,15 +68,15 @@ class ConversationContext:
         
         return "\n".join(lines)
 
-    def to_json(self, filter=None):
-        messages = self.get_messages(filter=filter)
-        return json.loads(json.dumps(messages, default=self._json_serializer))
+    # def to_json(self, filter=None):
+    #     messages = self.get_messages(filter=filter)
+    #     return json.loads(json.dumps(messages, default=self._json_serializer))
 
-    @staticmethod
-    def _json_serializer(obj):
-        if isinstance(obj, datetime):
-            return obj.strftime("%H:%M:%S")
-        raise TypeError(f"Object of type {obj.__class__.__name__} is not JSON serializable")
+    # @staticmethod
+    # def _json_serializer(obj):
+    #     if isinstance(obj, datetime):
+    #         return obj.strftime("%H:%M:%S")
+    #     raise TypeError(f"Object of type {obj.__class__.__name__} is not JSON serializable")
 
 
 class BaseLLMAgent:
@@ -112,16 +112,14 @@ class BaseLLMAgent:
             temperature=0.5
         )
 
-        r_content = response.choices[0].message.content
-        logger.debug("Response content: {}", r_content)
+        content = response.choices[0].message.content
+        logger.debug("Response content: {}", content)
 
         if self.output_json:
-            response = json.loads(r_content)
-        else:
-            response = r_content
+            content = json.loads(content)
 
         return {
-            "response": response,
+            "content": content,
             "messages": messages
         }
 
@@ -141,7 +139,7 @@ class BaseLLMAgent:
 
 
 class ResponseLLMAgent(BaseLLMAgent):
-    default_response = ""
+    default_content = ""
     
     def __init__(self):
         super().__init__(
@@ -163,8 +161,8 @@ class ResponseLLMAgent(BaseLLMAgent):
     def completion(self, context, *args, **kwargs):
         result = super().completion(context, *args, **kwargs)
 
-        if result["response"] is None:
-            result["response"] = self.default_response
+        if result["content"] is None:
+            result["content"] = self.default_content
 
         return result
 

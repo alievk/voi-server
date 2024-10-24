@@ -43,20 +43,22 @@ class VoiceGenerator:
 
         return self.tts.tts(text=text, speaker=self.speaker, language=self.language)
 
-    def generate_async(self, text):
+    def generate_async(self, text, id=None):
         if not self.running:
             raise RuntimeError("VoiceGenerator is not running")
 
-        self.text_queue.put(text)
+        self.text_queue.put({"text": text, "id": id})
 
     def _processing_loop(self):
         while self.running:
-            text = self.text_queue.get()
-            if text is None:
+            item = self.text_queue.get()
+            if item is None:
                 break
 
+            text, id = item["text"], item["id"]
+
             for chunk in self.generate(text, streaming=True):
-                asyncio.run_coroutine_threadsafe(self.generated_audio_cb(chunk), self._event_loop)
+                asyncio.run_coroutine_threadsafe(self.generated_audio_cb(audio_chunk=chunk, id=id), self._event_loop)
                 if not self.running or not self.text_queue.empty(): # stop on new text or interrupt
                     break
 

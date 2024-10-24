@@ -47,7 +47,7 @@ class Conversation:
 
         if asr_result and (asr_result["confirmed_text"] or asr_result["unconfirmed_text"]):
             message = self._create_message_from_transcription(asr_result)
-            context_changed = self._update_conversation_context(message)
+            context_changed, changed_message = self._update_conversation_context(message)
             # if context_changed:
             #     self._transcription_changed.set()
 
@@ -55,13 +55,13 @@ class Conversation:
             need_response = self.conversation_context.messages and self.conversation_context.messages[-1]["role"] == "user"
             if need_response:
                 response = self._response_agent.completion(self.conversation_context)
-                self.voice_generator.generate_async(text=response["response"])
-                agent_response = {
+                agent_message = {
                     "role": "assistant",
-                    "content": response["response"],
+                    "content": response["content"],
                     "time": datetime.now()
                 }
-                self._update_conversation_context(agent_response)
+                _, new_message = self._update_conversation_context(agent_message)
+                self.voice_generator.generate_async(text=response["content"], id=new_message["id"])
 
     def _create_message_from_transcription(self, transcription):
         confirmed = transcription["confirmed_text"]
@@ -77,10 +77,10 @@ class Conversation:
 
     def _update_conversation_context(self, message):
         compare_ignore_case = lambda x, y: x.strip().lower() == y.strip().lower()
-        context_changed = self.conversation_context.add_message(message, text_compare_f=compare_ignore_case)
+        context_changed, changed_message = self.conversation_context.add_message(message, text_compare_f=compare_ignore_case)
         if context_changed:
             asyncio.run_coroutine_threadsafe(self.context_changed_cb(self.conversation_context), self._event_loop)
-        return context_changed
+        return context_changed, changed_message
 
     def _response_agent_loop(self):
         while True:
@@ -92,11 +92,11 @@ class Conversation:
             
             logger.error("Context changed:\n{}", self.conversation_context.to_text())
             response = self._response_agent.completion(self.conversation_context)
-            logger.error("Agent response:\n{}", response["response"])
+            logger.error("Agent response:\n{}", response["content"])
 
             self.last_agent_message = {
                 "role": "assistant",
-                "content": response["response"],
+                "content": response["content"],
                 "time": datetime.now()
             }
 
@@ -115,6 +115,14 @@ async def handle_connection(websocket):
     def convert_f32le_to_s16le(buffer):
         return (buffer * 32768.0).astype(np.int16).tobytes()
 
+    def serialize_message(metadata, blob=None):
+        metadata = json.dumps(metadata).encode('utf-8')
+        metadata_length = len(metadata).to_bytes(4, byteorder='big')
+        if blob is None:
+            return metadata_length + metadata
+        else:
+            return metadata_length + metadata + blob
+
     @logger.catch
     async def handle_input_audio(audio_chunk):
         # audio_chunk is f32le
@@ -124,26 +132,37 @@ async def handle_connection(websocket):
 
     @logger.catch
     async def handle_context_changed(context):
-        messages = context.to_json(filter=lambda msg: not msg["handled"])
+        messages = context.get_messages(filter=lambda msg: not msg["handled"])
         for msg in messages:
-            logger.info("Sending message: {}", msg)
-            await websocket.send(json.dumps(msg))
+            data = {
+                "type": "message",
+                "role": msg["role"],
+                "content": msg["content"],
+                "time": msg["time"].strftime("%H:%M:%S"),
+                "id": msg["id"]
+            }
+            logger.info("Sending message: {}", data)
+            await websocket.send(serialize_message(data))
             context.update_message(msg["id"], handled=True)
 
     @logger.catch
-    async def handle_generated_audio(audio_chunk):
+    async def handle_generated_audio(audio_chunk, id=None):
         # audio_chunk is f32le
         if audio_chunk is None: # end of audio
             audio_output_stream.flush()
         else:
-            audio_output_stream.put(audio_chunk)
+            audio_output_stream.put(audio_chunk, id=id)
             audio_output_saver.write(convert_f32le_to_s16le(audio_chunk))
 
     @logger.catch
-    async def handle_webm_audio(audio_chunk):
+    async def handle_webm_audio(audio_chunk, id=None):
         # chunk is webm
         if audio_chunk is not None and websocket.open:
-            await websocket.send(audio_chunk)
+            metadata = {
+                "type": "audio",
+                "id": 0 if id is None else id
+            }
+            await websocket.send(serialize_message(metadata, audio_chunk))
 
     asr = OnlineASR(
         cached=True

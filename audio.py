@@ -172,7 +172,7 @@ class AudioOutputStream:
         self.out_audio_thread = threading.Thread(target=self._ffmpeg_out_pipe, name='ffmpeg-out-pipe', daemon=True)
         self.out_audio_thread.start()
 
-    def put(self, chunk):
+    def put(self, chunk, id=None):
         """ chunk is f32le """
         if not self.running:
             logger.warning("AudioOutputStream is not running")
