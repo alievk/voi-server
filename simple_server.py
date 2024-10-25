@@ -13,8 +13,8 @@ from loguru import logger
 
 import litellm
 
-from stt import OnlineASR
-from tts import VoiceGenerator
+from recognition import OnlineASR
+from generation import VoiceGenerator
 from audio import AudioOutputStream, AudioInputStream, WavSaver
 from llm import ConversationContext, BaseLLMAgent, ResponseLLMAgent
 
