@@ -53,6 +53,7 @@ class Conversation:
         if end_of_audio:
             need_response = self.conversation_context.messages and self.conversation_context.messages[-1]["role"] == "user"
             if need_response:
+                self.conversation_context.process_interrupted_messages()
                 response = self._response_agent.completion(self.conversation_context)
                 agent_message = {
                     "role": "assistant",
@@ -99,6 +100,16 @@ class Conversation:
                 "time": datetime.now()
             }
 
+    def on_assistant_audio_end(self, speech_id, duration):
+        messages = self.conversation_context.get_messages(filter=lambda msg: msg["role"] == "assistant" and msg["id"] == speech_id)
+        assert messages, f"Message with speech_id {speech_id} not found"
+        self.conversation_context.update_message(messages[0]["id"], audio_duration=duration)
+
+    def on_user_interrupt(self, speech_id, interrupted_at):
+        messages = self.conversation_context.get_messages(filter=lambda msg: msg["role"] == "assistant" and msg["id"] == speech_id)
+        assert messages, f"Message with speech_id {speech_id} not found"
+        self.conversation_context.update_message(messages[0]["id"], interrupted_at=interrupted_at)
+
     def shutdown(self):
         self.running = False
         # self._transcription_changed.set()
@@ -111,7 +122,7 @@ async def handle_connection(websocket):
 
     logger.info("New connection is started")
 
-    last_audio_id = 0
+    last_assistant_speech_id = 0
 
     def convert_f32le_to_s16le(buffer):
         return (buffer * 32768.0).astype(np.int16).tobytes()
@@ -147,26 +158,26 @@ async def handle_connection(websocket):
             context.update_message(msg["id"], handled=True)
 
     @logger.catch
-    async def handle_generated_audio(audio_chunk, id=None):
+    async def handle_generated_audio(audio_chunk, speech_id, duration=None):
         # audio_chunk is f32le
-        nonlocal last_audio_id
+        nonlocal last_assistant_speech_id
         if audio_chunk is None: # end of audio
             audio_output_stream.flush()
+            conversation.on_assistant_audio_end(speech_id, duration)
         else:
             audio_output_stream.put(audio_chunk)
             audio_output_saver.write(convert_f32le_to_s16le(audio_chunk))
-            assert id is not None
-            last_audio_id = id # hack
+            last_assistant_speech_id = speech_id # hack
 
     @logger.catch
     async def handle_webm_audio(audio_chunk):
         # chunk is webm
-        nonlocal last_audio_id
+        nonlocal last_assistant_speech_id
         if audio_chunk is not None and websocket.open:
             metadata = {
                 "type": "audio",
                 # FIXME: we can't get audio id here because we're using ffmpeg to convert source audio to webm and lose audio id
-                "id": last_audio_id
+                "speech_id": last_assistant_speech_id
             }
             await websocket.send(serialize_message(metadata, audio_chunk))
 
@@ -218,14 +229,25 @@ async def handle_connection(websocket):
         async for message in websocket:
             if isinstance(message, bytes):
                 audio_input_stream.put(message)
-            elif message == 'START_RECORDING':
-                logger.info("Received START_RECORDING message")
-                audio_input_stream.start()
-            elif message == 'STOP_RECORDING':
-                logger.info("Received STOP_RECORDING message")
-                audio_input_stream.stop()
             else:
-                logger.warning(f"Received unexpected message: {message}")
+                try:
+                    message_data = json.loads(message)
+                    message_type = message_data["type"]
+                    if message_type == "start_recording":
+                        logger.info("Received start_recording message")
+                        audio_input_stream.start()
+                    elif message_type == "stop_recording":
+                        logger.info("Received stop_recording message")
+                        audio_input_stream.stop()
+                    elif message_type == "interrupt":
+                        logger.info("Received interrupt message")
+                        conversation.on_user_interrupt(
+                            speech_id=message_data["speech_id"], 
+                            interrupted_at=message_data["interrupted_at_ms"] / 1000.0)
+                    else:
+                        logger.warning(f"Received unexpected type: {message_type}")
+                except json.JSONDecodeError:
+                    logger.warning(f"Received invalid JSON message: {message}")
         logger.info("WebSocket connection closed, checking timeout")
     except websockets.exceptions.ConnectionClosed:
         logger.info("WebSocket connection closed unexpectedly")

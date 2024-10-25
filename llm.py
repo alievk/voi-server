@@ -33,50 +33,56 @@ class ConversationContext:
             return False, None
 
     def get_messages(self, include_fields=None, filter=None):
-        if include_fields is None:
-            messages = self.messages
-        else:
-            messages = [{k: v for k, v in msg.items() if k in include_fields} for msg in self.messages]
+        with self.lock:
+            if include_fields is None:
+                messages = self.messages
+            else:
+                messages = [{k: v for k, v in msg.items() if k in include_fields} for msg in self.messages]
 
-        if filter:
-            messages = [msg for msg in messages if filter(msg)]
+            if filter:
+                messages = [msg for msg in messages if filter(msg)]
 
-        return messages
+            return messages
 
     def update_message(self, id, **kwargs):
-        for msg in self.messages:
-            if msg["id"] == id:
-                msg.update(kwargs)
-                return True
-        return False
+        with self.lock:
+            for msg in self.messages:
+                if msg["id"] == id:
+                    msg.update(kwargs)
+                    return True
+            return False
 
     def to_text(self):
-        if not self.messages:
-            return ""
+        with self.lock:
+            if not self.messages:
+                return ""
 
-        lines = []
-        for item in self.messages:
-            if not "time" in item:
-                time_str = "00:00:00"
-            else:
-                time_str = item["time"].strftime("%H:%M:%S")
+            lines = []
+            for item in self.messages:
+                if not "time" in item:
+                    time_str = "00:00:00"
+                else:
+                    time_str = item["time"].strftime("%H:%M:%S")
+                
+                role = item["role"].lower()
+                content = item["content"]
+                
+                lines.append(f"{time_str} | {role} - {content}")
             
-            role = item["role"].lower()
-            content = item["content"]
-            
-            lines.append(f"{time_str} | {role} - {content}")
-        
-        return "\n".join(lines)
+            return "\n".join(lines)
 
-    # def to_json(self, filter=None):
-    #     messages = self.get_messages(filter=filter)
-    #     return json.loads(json.dumps(messages, default=self._json_serializer))
-
-    # @staticmethod
-    # def _json_serializer(obj):
-    #     if isinstance(obj, datetime):
-    #         return obj.strftime("%H:%M:%S")
-    #     raise TypeError(f"Object of type {obj.__class__.__name__} is not JSON serializable")
+    def process_interrupted_messages(self):
+        # FIXME: simple and dirty way to process interrupted messages
+        with self.lock:
+            for msg in self.messages:
+                if "interrupted_at" in msg and "audio_duration" in msg:
+                    # Cut the message content to the point where it was interrupted
+                    percent = msg["interrupted_at"] / msg["audio_duration"]
+                    if percent < 1: # if percent > 1, the message was not interrupted
+                        cut_content = msg["content"][:int(len(msg["content"]) * percent)]
+                        msg["content"] = f"{cut_content}... (interrupted)"
+                        del msg["interrupted_at"], msg["audio_duration"] # don't process this message again
+                        msg["handled"] = False
 
 
 class BaseLLMAgent:

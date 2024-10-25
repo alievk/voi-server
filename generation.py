@@ -57,13 +57,15 @@ class VoiceGenerator:
 
             text, id = item["text"], item["id"]
 
+            duration = 0.0
             for chunk in self.generate(text, streaming=True):
-                asyncio.run_coroutine_threadsafe(self.generated_audio_cb(audio_chunk=chunk, id=id), self._event_loop)
+                asyncio.run_coroutine_threadsafe(self.generated_audio_cb(audio_chunk=chunk, speech_id=id), self._event_loop)
+                duration += len(chunk) / self.sample_rate
                 if not self.running or not self.text_queue.empty(): # stop on new text or interrupt
                     break
 
             # end of generation
-            asyncio.run_coroutine_threadsafe(self.generated_audio_cb(None), self._event_loop)
+            asyncio.run_coroutine_threadsafe(self.generated_audio_cb(audio_chunk=None, speech_id=id, duration=duration), self._event_loop)
 
     def _stream_generator(
         self,
