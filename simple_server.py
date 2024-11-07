@@ -53,6 +53,15 @@ class Conversation:
         if end_of_audio:
             self._maybe_respond()
 
+    def on_manual_text(self, text):
+        message = {
+            "role": "user",
+            "content": text,
+            "time": datetime.now()
+        }
+        self._update_conversation_context(message)
+        self._maybe_respond()
+
     def _maybe_respond(self):
         need_response = self.conversation_context.messages and self.conversation_context.messages[-1]["role"] == "user"
         if need_response:
@@ -189,9 +198,11 @@ async def handle_connection(websocket):
     )
 
     voice_generator = VoiceGenerator(
+        model_name="sasha_fox",
         cached=True,
         generated_audio_cb=handle_generated_audio
     )
+    voice_generator.set_voice("moderate")
 
     audio_input_stream = AudioInputStream(
         handle_input_audio,
@@ -242,6 +253,9 @@ async def handle_connection(websocket):
                     elif message_type == "stop_recording":
                         logger.info("Received stop_recording message")
                         audio_input_stream.stop()
+                    elif message_type == "manual_text":
+                        logger.info("Received manual_text message")
+                        conversation.on_manual_text(message_data["content"])
                     elif message_type == "interrupt":
                         logger.info("Received interrupt message")
                         conversation.on_user_interrupt(
