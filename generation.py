@@ -1,23 +1,30 @@
+import os
 import asyncio
 import queue
 import threading
+import json
+from loguru import logger
 
-from TTS.api import TTS
+import torch
+
+from TTS.tts.configs.xtts_config import XttsConfig
+from TTS.tts.models.xtts import Xtts
 
 
-# OK speakers: 43, 49, 56
-SPEAKERS = ['Claribel Dervla', 'Daisy Studious', 'Gracie Wise', 'Tammie Ema', 'Alison Dietlinde', 'Ana Florence', 'Annmarie Nele', 'Asya Anara', 'Brenda Stern', 'Gitta Nikolina', 'Henriette Usha', 'Sofia Hellen', 'Tammy Grit', 'Tanja Adelina', 'Vjollca Johnnie', 'Andrew Chipper', 'Badr Odhiambo', 'Dionisio Schuyler', 'Royston Min', 'Viktor Eka', 'Abrahan Mack', 'Adde Michal', 'Baldur Sanjin', 'Craig Gutsy', 'Damien Black', 'Gilberto Mathias', 'Ilkin Urbano', 'Kazuhiko Atallah', 'Ludvig Milivoj', 'Suad Qasim', 'Torcull Diarmuid', 'Viktor Menelaos', 'Zacharie Aimilios', 'Nova Hogarth', 'Maja Ruoho', 'Uta Obando', 'Lidiya Szekeres', 'Chandra MacFarland', 'Szofi Granger', 'Camilla Holmström', 'Lilya Stainthorpe', 'Zofija Kendrick', 'Narelle Moon', 'Barbora MacLean', 'Alexandra Hisakawa', 'Alma María', 'Rosemary Okafor', 'Ige Behringer', 'Filip Traverse', 'Damjan Chapman', 'Wulf Carlevaro', 'Aaron Dreschner', 'Kumar Dahl', 'Eugenio Mataracı', 'Ferran Simen', 'Xavier Hayasaka', 'Luis Moray', 'Marcos Rudaski']
-
+# OK voices for the multispeaker_original model:
+# Barbora MacLean, Damjan Chapman, Luis Moray
 
 class VoiceGenerator:
-    _cached_tts_model = None
+    _cached_tts_model_params = None
 
-    def __init__(self, generated_audio_cb=None, speaker=SPEAKERS[49], cached=False):
+    def __init__(self, generated_audio_cb=None, model_name=None, cached=False):
         """ generated_audio_cb receives f32le audio chunks """
         self.generated_audio_cb = generated_audio_cb
-        self.speaker = speaker
+        self.model_name = "multispeaker_original" if model_name is None else model_name
         self.language = 'en'
-        self.tts = VoiceGenerator.get_model(cached=cached)
+        self.tts_temperature = 0.7
+        self.voice = None
+        self.tts_model, self.tts_voices = self.get_model(self.model_name, cached=cached)
 
         self.running = False
         self.text_queue = None
@@ -29,19 +36,67 @@ class VoiceGenerator:
         self.thread = threading.Thread(target=self._processing_loop)
         self.thread.start()
 
+    def set_voice(self, voice):
+        if voice not in self.tts_voices:
+            raise ValueError(f"Voice {voice} not found")
+
+        self.voice = voice
+
     @staticmethod
-    def get_model(cached=True):
-        if cached and VoiceGenerator._cached_tts_model is not None:
-            return VoiceGenerator._cached_tts_model
+    def get_model(model_name, cached=True):
+        if cached and VoiceGenerator._cached_tts_model_params is not None:
+            return VoiceGenerator._cached_tts_model_params
 
-        VoiceGenerator._cached_tts_model = TTS("tts_models/multilingual/multi-dataset/xtts_v2", gpu=True)
-        return VoiceGenerator._cached_tts_model
+        model_file = os.path.join(os.path.dirname(__file__), "tts_models.json")
+        with open(model_file, "r") as f:
+            model_params = json.load(f)
 
-    def generate(self, text, streaming=False):
+        config = XttsConfig()
+        config.load_json(model_params[model_name]["config"])
+        model = Xtts.init_from_config(config)
+        model.load_checkpoint(
+            config,
+            checkpoint_path=model_params[model_name]["checkpoint"],
+            vocab_path=model_params[model_name]["tokenizer"],
+            use_deepspeed=False
+        )
+        model.cuda()
+
+        voices = torch.load(model_params[model_name]["voices"])
+
+        VoiceGenerator._cached_tts_model_params = (model, voices)
+        return VoiceGenerator._cached_tts_model_params
+
+    def generate(self, text, voice=None, streaming=False):
+        if voice:
+            self.set_voice(voice)
+
+        if self.voice is None:
+            voice = list(self.tts_voices.keys())[0]
+            self.set_voice(voice)
+            logger.warning(f"No voice specified, using the first available voice: {voice}")
+
+        gpt_cond_latent = self.tts_voices[self.voice]["gpt_cond_latent"]
+        speaker_embedding = self.tts_voices[self.voice]["speaker_embedding"]
+
         if streaming:
-            return self._stream_generator(text)
+            return self._stream_generator(
+                text=text,
+                language=self.language,
+                temperature=self.tts_temperature,
+                gpt_cond_latent=gpt_cond_latent,
+                speaker_embedding=speaker_embedding,
+            )
+        else:
+            out = self.tts_model.inference(
+                text,
+                language=self.language,
+                temperature=self.tts_temperature,
+                gpt_cond_latent=gpt_cond_latent,
+                speaker_embedding=speaker_embedding,
+            )
 
-        return self.tts.tts(text=text, speaker=self.speaker, language=self.language)
+            return torch.tensor(out["wav"]).unsqueeze(0).numpy()
 
     def generate_async(self, text, id=None):
         if not self.running:
@@ -69,22 +124,16 @@ class VoiceGenerator:
 
     def _stream_generator(
         self,
-        text: str
+        **kwargs
     ):
-        latents = self.tts.synthesizer.tts_model.speaker_manager.speakers[self.speaker]
-        chunks = self.tts.synthesizer.tts_model.inference_stream(
-            text=text,
-            language=self.language,
-            gpt_cond_latent=latents["gpt_cond_latent"],
-            speaker_embedding=latents["speaker_embedding"]
-        )
+        chunks = self.tts_model.inference_stream(**kwargs)
 
         for chunk in chunks:
             yield chunk.cpu().numpy()
 
     @property
     def sample_rate(self):
-        return self.tts.synthesizer.output_sample_rate
+        return 24000
 
     def stop(self):
         self.running = False
