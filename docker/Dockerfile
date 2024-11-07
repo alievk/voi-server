@@ -39,9 +39,8 @@ RUN chmod 700 /home/user/.ssh && chmod 600 /home/user/.ssh/authorized_keys
 
 # Install essential Python packages
 RUN pip3 install \
-    jupyterlab \
-    torch \
-    numpy
+    jupyterlab==4.2.5 \
+    ipywidgets
 
 # Set up Jupyter configuration for the new user
 RUN mkdir -p /home/user/.jupyter
@@ -74,16 +73,13 @@ RUN echo 'export NVM_DIR="/usr/local/nvm"' >> /etc/bash.bashrc \
 RUN echo 'export PATH="$HOME/.local/bin:$PATH"' >> /etc/bash.bashrc
 
 # Copy start script and make it executable for the new user
-COPY start.sh /root/start.sh
-RUN chmod +x /root/start.sh
+COPY start.sh /home/user/start.sh
 
 # Fix permissions
 RUN chown -R user:user /home/user
 
-# Expose necessary ports
-EXPOSE 22
-EXPOSE 8500
-EXPOSE 8501
+USER user
+WORKDIR /home/user
 
 # Start bash shell by default
-CMD ["/bin/bash", "/root/start.sh"]
+CMD ["/bin/bash", "/home/user/start.sh"]
