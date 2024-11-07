@@ -51,17 +51,20 @@ class Conversation:
             #     self._transcription_changed.set()
 
         if end_of_audio:
-            need_response = self.conversation_context.messages and self.conversation_context.messages[-1]["role"] == "user"
-            if need_response:
-                self.conversation_context.process_interrupted_messages()
-                response = self._response_agent.completion(self.conversation_context)
-                agent_message = {
-                    "role": "assistant",
-                    "content": response["content"],
-                    "time": datetime.now()
-                }
-                _, new_message = self._update_conversation_context(agent_message)
-                self.voice_generator.generate_async(text=response["content"], id=new_message["id"])
+            self._maybe_respond()
+
+    def _maybe_respond(self):
+        need_response = self.conversation_context.messages and self.conversation_context.messages[-1]["role"] == "user"
+        if need_response:
+            self.conversation_context.process_interrupted_messages()
+            response = self._response_agent.completion(self.conversation_context)
+            agent_message = {
+                "role": "assistant",
+                "content": response["content"],
+                "time": datetime.now()
+            }
+            _, new_message = self._update_conversation_context(agent_message)
+            self.voice_generator.generate_async(text=response["content"], id=new_message["id"])
 
     def _create_message_from_transcription(self, transcription):
         confirmed = transcription["confirmed_text"]
