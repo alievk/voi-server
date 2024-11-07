@@ -6,7 +6,6 @@ pytest-asyncio
 mypy
 flake8
 black
-numpy
 scipy
 websockets
 loguru
@@ -14,6 +13,34 @@ loguru
 ffmpeg
 librosa
 
-git+https://github.com/alievk/whisperX.git@ali
+torch==2.3
+torchvision==0.18.0
+torchaudio==2.3.0
+numpy==1.26.4
+transformers==4.39.3
+pandas==2.2.3
 
 litellm
+
+# for whisperX
+nltk
+pyannote.audio
+ctranslate2==4.4.0
+faster-whisper==1.0.0
+
+# for TTS package
+coqpit==0.0.17
+trainer==0.0.36 
+pysbd==0.3.4
+anyascii==0.3.2
+inflect==7.4.0
+bangla
+bnnumerizer
+bnunicodenormalizer
+gruut[de,es,fr]==2.4.0
+jamo
+jieba
+pypinyin
+hangul_romanize
+spacy[ja]==3.7.5
+mutagen
