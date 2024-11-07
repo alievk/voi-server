@@ -2,6 +2,7 @@ import threading
 import json
 from datetime import datetime
 import litellm
+import random
 from loguru import logger
 
 from prompts import response_agent_system_prompt, response_agent_examples, response_agent_greeting_message
@@ -87,6 +88,9 @@ class ConversationContext:
 
 class BaseLLMAgent:
     def __init__(self, model_name, system_prompt, examples=None, output_json=False):
+        if isinstance(system_prompt, list):
+            system_prompt = "\n".join(system_prompt)
+
         self.model_name = model_name
         self.system_prompt = system_prompt
         self.examples = examples
@@ -147,22 +151,14 @@ class BaseLLMAgent:
 class ResponseLLMAgent(BaseLLMAgent):
     default_content = ""
     
-    def __init__(self):
+    def __init__(self, system_prompt, examples=None, greetings=None):
         super().__init__(
             model_name="openai/openai-gpt-4o-mini", 
-            system_prompt=response_agent_system_prompt, 
-            examples=response_agent_examples,
+            system_prompt=system_prompt, 
+            examples=examples,
             output_json=False
         )
-
-    # def _extra_context_to_text(self, context):
-    #     assert "detection_agent_state" in context, "This agent requires detection agent's current state"
-    #     assert "clarification_agent_state" in context, "This agent requires clarification agent's current state"
-    #     d_state = context["detection_agent_state"]
-    #     c_state = context["clarification_agent_state"]
-    #     text = "Detection agent state:\nAction: {}\nReason: {}\n\n".format(d_state["action"], d_state["reason"])
-    #     text += "Clarification agent state:\nHas question: {}\nQuestion: {}\n\n".format(c_state["has_question"], c_state["question"])
-    #     return text
+        self.greetings = greetings
 
     def completion(self, context, *args, **kwargs):
         result = super().completion(context, *args, **kwargs)
@@ -172,10 +168,9 @@ class ResponseLLMAgent(BaseLLMAgent):
 
         return result
 
-    @staticmethod
-    def greeting_message():
+    def greeting_message(self):
         return {
             "role": "assistant",
-            "content": response_agent_greeting_message,
+            "content": self.greetings[random.randint(0, len(self.greetings) - 1)],
             "time": datetime.now()
         }

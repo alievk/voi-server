@@ -20,22 +20,29 @@ from llm import ConversationContext, BaseLLMAgent, ResponseLLMAgent
 
 
 class Conversation:
-    def __init__(self, asr, voice_generator, context_changed_cb=None):
+    def __init__(self, asr, voice_generator, agent_name=None, context_changed_cb=None):
         self.asr = asr
         self.voice_generator = voice_generator
         self.context_changed_cb = context_changed_cb
         self.conversation_context = ConversationContext()
 
-        self._response_agent = ResponseLLMAgent()
-        self._transcription_changed = threading.Event()
+        with open("agents.json", "r") as f:
+            self.agents_config = json.load(f)
+        
+        if agent_name is None:
+            agent_name = list(self.agents_config.keys())[0]
+            logger.info("No agent name provided, using default: {}", agent_name)
+
+        self._response_agent = ResponseLLMAgent(
+            system_prompt=self.agents_config[agent_name]["system_prompt"],
+            examples=self.agents_config[agent_name]["examples"],
+            greetings=self.agents_config[agent_name]["greetings"]
+        )
+
         self._event_loop = asyncio.get_event_loop()
-        self._response_agent_loop = threading.Thread(target=self._response_agent_loop, name='response-agent-loop', daemon=True)
-        # self._response_agent_loop.start()
-        self.running = True
-        self.last_agent_message = None
 
     def greeting(self):
-        _, message = self._update_conversation_context(ResponseLLMAgent.greeting_message())
+        _, message = self._update_conversation_context(self._response_agent.greeting_message())
         self.voice_generator.generate_async(text=message["content"], id=message["id"])
 
     @logger.catch
@@ -61,6 +68,20 @@ class Conversation:
         }
         self._update_conversation_context(message)
         self._maybe_respond()
+
+    def on_activate_agent(self, agent_name):
+        config = self.agents_config[agent_name]
+
+        self.voice_generator.set_model(config["tts_model"])
+        self.voice_generator.set_voice(config["default_voice"])
+
+        self._response_agent = ResponseLLMAgent(
+            system_prompt=config["system_prompt"],
+            examples=config["examples"],
+            greetings=config["greetings"]
+        )
+
+        self.conversation_context = ConversationContext()
 
     def _maybe_respond(self):
         need_response = self.conversation_context.messages and self.conversation_context.messages[-1]["role"] == "user"
@@ -94,24 +115,6 @@ class Conversation:
             asyncio.run_coroutine_threadsafe(self.context_changed_cb(self.conversation_context), self._event_loop)
         return context_changed, changed_message
 
-    def _response_agent_loop(self):
-        while True:
-            self._transcription_changed.wait()
-            self._transcription_changed.clear()
-
-            if not self.running:
-                break
-            
-            logger.error("Context changed:\n{}", self.conversation_context.to_text())
-            response = self._response_agent.completion(self.conversation_context)
-            logger.error("Agent response:\n{}", response["content"])
-
-            self.last_agent_message = {
-                "role": "assistant",
-                "content": response["content"],
-                "time": datetime.now()
-            }
-
     def on_assistant_audio_end(self, speech_id, duration):
         messages = self.conversation_context.get_messages(filter=lambda msg: msg["role"] == "assistant" and msg["id"] == speech_id)
         assert messages, f"Message with speech_id {speech_id} not found"
@@ -122,19 +125,12 @@ class Conversation:
         assert messages, f"Message with speech_id {speech_id} not found"
         self.conversation_context.update_message(messages[0]["id"], interrupted_at=interrupted_at)
 
-    def shutdown(self):
-        self.running = False
-        # self._transcription_changed.set()
-        # self._response_agent_loop.join(timeout=5)
-
 
 async def handle_connection(websocket):
     log_dir = f"logs/conversations/{get_timestamp()}"
     logger.add(f"{log_dir}/server.log", rotation="100 MB")
 
     logger.info("New connection is started")
-
-    last_assistant_speech_id = 0
 
     def convert_f32le_to_s16le(buffer):
         return (buffer * 32768.0).astype(np.int16).tobytes()
@@ -198,11 +194,9 @@ async def handle_connection(websocket):
     )
 
     voice_generator = VoiceGenerator(
-        model_name="sasha_fox",
         cached=True,
         generated_audio_cb=handle_generated_audio
     )
-    voice_generator.set_voice("moderate")
 
     audio_input_stream = AudioInputStream(
         handle_input_audio,
@@ -233,11 +227,22 @@ async def handle_connection(websocket):
         sample_rate=voice_generator.sample_rate
     )
 
-    voice_generator.start()
-    audio_input_stream.start()
-    audio_output_stream.start()
+    last_assistant_speech_id = 0
 
-    conversation.greeting()
+    def start_conversation():
+        nonlocal last_assistant_speech_id
+        last_assistant_speech_id = 0
+        voice_generator.start()
+        audio_input_stream.start()
+        audio_output_stream.start()
+        conversation.greeting()
+
+    def stop_conversation():
+        voice_generator.stop()
+        audio_input_stream.stop()
+        audio_output_stream.stop()
+
+    start_conversation()
 
     try:
         async for message in websocket:
@@ -261,6 +266,11 @@ async def handle_connection(websocket):
                         conversation.on_user_interrupt(
                             speech_id=message_data["speech_id"], 
                             interrupted_at=message_data["interrupted_at_ms"] / 1000.0)
+                    elif message_type == "activate_agent":
+                        logger.info("Received activate_agent message")
+                        stop_conversation()
+                        conversation.on_activate_agent(message_data["agent_name"])
+                        start_conversation()
                     else:
                         logger.warning(f"Received unexpected type: {message_type}")
                 except json.JSONDecodeError:
@@ -270,12 +280,9 @@ async def handle_connection(websocket):
         logger.info("WebSocket connection closed unexpectedly")
     finally:
         logger.info("Cleaning up resources")
-        voice_generator.stop()
-        audio_input_stream.stop()
-        audio_output_stream.stop()
+        stop_conversation()
         audio_input_saver.close()
         audio_output_saver.close()
-        conversation.shutdown()
         
     logger.info("Connection is done")
 

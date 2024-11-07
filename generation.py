@@ -24,6 +24,7 @@ class VoiceGenerator:
         self.language = 'en'
         self.tts_temperature = 0.7
         self.voice = None
+
         self.tts_model, self.tts_voices = self.get_model(self.model_name, cached=cached)
 
         self.running = False
@@ -35,6 +36,10 @@ class VoiceGenerator:
         self.text_queue = queue.Queue()
         self.thread = threading.Thread(target=self._processing_loop)
         self.thread.start()
+
+    def set_model(self, model_name):
+        self.model_name = model_name
+        self.tts_model, self.tts_voices = self.get_model(self.model_name, cached=False)
 
     def set_voice(self, voice):
         if voice not in self.tts_voices:
