@@ -1,3 +1,4 @@
+import os
 import asyncio
 import ssl
 import json
@@ -5,9 +6,10 @@ import threading
 from collections import deque
 from datetime import datetime
 import signal
+from typing import Callable
 
-import numpy as np
 import torch
+import numpy as np
 import websockets
 from loguru import logger
 
@@ -20,29 +22,23 @@ from llm import ConversationContext, BaseLLMAgent, ResponseLLMAgent
 
 
 class Conversation:
-    def __init__(self, asr, voice_generator, agent_name=None, context_changed_cb=None):
+    def __init__(
+        self, 
+        asr: OnlineASR, 
+        voice_generator: VoiceGenerator,
+        response_agent: BaseLLMAgent,
+        context_changed_cb: Callable=None
+    ):
         self.asr = asr
         self.voice_generator = voice_generator
+        self.response_agent = response_agent
         self.context_changed_cb = context_changed_cb
         self.conversation_context = ConversationContext()
-
-        with open("agents.json", "r") as f:
-            self.agents_config = json.load(f)
-        
-        if agent_name is None:
-            agent_name = list(self.agents_config.keys())[0]
-            logger.info("No agent name provided, using default: {}", agent_name)
-
-        self._response_agent = ResponseLLMAgent(
-            system_prompt=self.agents_config[agent_name]["system_prompt"],
-            examples=self.agents_config[agent_name]["examples"],
-            greetings=self.agents_config[agent_name]["greetings"]
-        )
 
         self._event_loop = asyncio.get_event_loop()
 
     def greeting(self):
-        _, message = self._update_conversation_context(self._response_agent.greeting_message())
+        _, message = self._update_conversation_context(self.response_agent.greeting_message())
         self.voice_generator.generate_async(text=message["content"], id=message["id"])
 
     @logger.catch
@@ -69,25 +65,11 @@ class Conversation:
         self._update_conversation_context(message)
         self._maybe_respond()
 
-    def on_activate_agent(self, agent_name):
-        config = self.agents_config[agent_name]
-
-        self.voice_generator.set_model(config["tts_model"])
-        self.voice_generator.set_voice(config["default_voice"])
-
-        self._response_agent = ResponseLLMAgent(
-            system_prompt=config["system_prompt"],
-            examples=config["examples"],
-            greetings=config["greetings"]
-        )
-
-        self.conversation_context = ConversationContext()
-
     def _maybe_respond(self):
         need_response = self.conversation_context.messages and self.conversation_context.messages[-1]["role"] == "user"
         if need_response:
             self.conversation_context.process_interrupted_messages()
-            response = self._response_agent.completion(self.conversation_context)
+            response = self.response_agent.completion(self.conversation_context)
             agent_message = {
                 "role": "assistant",
                 "content": response["content"],
@@ -189,61 +171,88 @@ async def handle_connection(websocket):
             }
             await websocket.send(serialize_message(metadata, audio_chunk))
 
+    @logger.catch
+    async def read_init_message(websocket):
+        data = await websocket.recv()
+        init_message = json.loads(data)
+        assert init_message["type"] == "init", f"The first message must be a JSON with 'init' type, but got: {init_message}"
+        assert "agent_name" in init_message, f"The first message must contain 'agent_name' field, but got: {init_message}"
+        return init_message
+
+    @logger.catch
+    def get_agent_config(agent_name):
+        with open(os.path.join(os.path.dirname(__file__), "agents.json"), "r") as f:
+            return json.load(f)[agent_name]
+    
+    init_message = await read_init_message(websocket)
+    agent_config = get_agent_config(init_message["agent_name"])
+
+    logger.info("Initializing speech recognition")
     asr = OnlineASR(
         cached=True
     )
 
+    logger.info("Initializing voice generation")
     voice_generator = VoiceGenerator(
         cached=True,
+        model_name=agent_config["tts_model"],
+        default_voice=agent_config["default_voice"],
         generated_audio_cb=handle_generated_audio
     )
+    voice_generator.start()
 
+    logger.info("Initializing audio input stream")
     audio_input_stream = AudioInputStream(
         handle_input_audio,
         chunk_size_ms=1000,
         input_sample_rate=16000, # client sends 16000
         output_sample_rate=asr.sample_rate
     )
-    
+    audio_input_stream.start()
+
+    logger.info("Initializing audio output stream")
     audio_output_stream = AudioOutputStream(
         handle_webm_audio,
         input_sample_rate=voice_generator.sample_rate,
         output_sample_rate=voice_generator.sample_rate
     )
+    audio_output_stream.start()
+
+    logger.info("Initializing response agent")
+    response_agent = ResponseLLMAgent(
+        system_prompt=agent_config["system_prompt"],
+        examples=agent_config["examples"],
+        greetings=agent_config["greetings"]
+    )
     
+    logger.info("Initializing conversation")
     conversation = Conversation(
         asr=asr,
         voice_generator=voice_generator,
+        response_agent=response_agent,
         context_changed_cb=handle_context_changed
     )
 
+    logger.info("Initializing audio input saver")
     audio_input_saver = WavSaver(
         f"{log_dir}/incoming.wav", 
         sample_rate=audio_input_stream.output_sample_rate
     )
 
+    logger.info("Initializing audio output saver")
     audio_output_saver = WavSaver(
         f"{log_dir}/outgoing.wav", 
         sample_rate=voice_generator.sample_rate
     )
 
+    # we need to send speech id to the client to identify which agent speech was interrupted by the user
+    # this variable is a hack to keep track of the last speech id because ffmpeg audio converter loses speech id
+    # one possible solution is to use a converter which will preserve metadata like speech id
     last_assistant_speech_id = 0
 
-    def start_conversation():
-        nonlocal last_assistant_speech_id
-        last_assistant_speech_id = 0
-        voice_generator.start()
-        audio_input_stream.start()
-        audio_output_stream.start()
-        conversation.greeting()
+    conversation.greeting()
 
-    def stop_conversation():
-        voice_generator.stop()
-        audio_input_stream.stop()
-        audio_output_stream.stop()
-
-    start_conversation()
-
+    logger.info("Entering main loop")
     try:
         async for message in websocket:
             if isinstance(message, bytes):
@@ -266,11 +275,6 @@ async def handle_connection(websocket):
                         conversation.on_user_interrupt(
                             speech_id=message_data["speech_id"], 
                             interrupted_at=message_data["interrupted_at_ms"] / 1000.0)
-                    elif message_type == "activate_agent":
-                        logger.info("Received activate_agent message")
-                        stop_conversation()
-                        conversation.on_activate_agent(message_data["agent_name"])
-                        start_conversation()
                     else:
                         logger.warning(f"Received unexpected type: {message_type}")
                 except json.JSONDecodeError:
@@ -280,9 +284,13 @@ async def handle_connection(websocket):
         logger.info("WebSocket connection closed unexpectedly")
     finally:
         logger.info("Cleaning up resources")
-        stop_conversation()
+        voice_generator.stop()
+        audio_input_stream.stop()
+        audio_output_stream.stop()
         audio_input_saver.close()
         audio_output_saver.close()
+
+        torch.cuda.empty_cache()
         
     logger.info("Connection is done")
 

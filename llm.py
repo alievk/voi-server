@@ -5,8 +5,6 @@ import litellm
 import random
 from loguru import logger
 
-from prompts import response_agent_system_prompt, response_agent_examples, response_agent_greeting_message
-
 
 class ConversationContext:
     def __init__(self):
