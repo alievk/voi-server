@@ -14,6 +14,16 @@ You must ignore unconfirmed words if:
   - They are not consistent with the user's previous speech
   """
 
+agent_message_format_description = """Respond with the following JSON object:
+{"text": "<agent response text>", "voice_tone": "<voice tone>"}
+<voice_tone> is used by the voice generator to choose the appropriate voice and intonation for <agent response text>.
+<voice_tone> is strictly one of the following:
+  - "neutral": the voice tone is normal, neutral
+  - "passionate": the voice tone is passionate, like a declaration of love or a passionate conversation
+  - "excited": the voice tone is excited, like a happy announcement or an excited conversation
+  - "sad": the voice tone is sad, like a sad story or a sad conversation
+"""
+
 
 class ConversationContext:
     def __init__(self):
@@ -99,6 +109,7 @@ class BaseLLMAgent:
             system_prompt = "\n".join(system_prompt)
 
         system_prompt = system_prompt.replace("{user_message_format_description}", user_message_format_description)
+        system_prompt = system_prompt.replace("{agent_message_format_description}", agent_message_format_description)
 
         self.model_name = model_name
         self.system_prompt = system_prompt
@@ -165,7 +176,7 @@ class ResponseLLMAgent(BaseLLMAgent):
             model_name="openai/openai-gpt-4o-mini", 
             system_prompt=system_prompt, 
             examples=examples,
-            output_json=False
+            output_json=True
         )
         self.greetings = greetings
 

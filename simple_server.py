@@ -70,13 +70,20 @@ class Conversation:
         if need_response:
             self.conversation_context.process_interrupted_messages()
             response = self.response_agent.completion(self.conversation_context)
+            if isinstance(response["content"], dict):
+                agent_text = response["content"]["text"]
+                agent_tone = response["content"]["voice_tone"]
+            else:
+                agent_text = response["content"]
+                agent_tone = "normal"
             agent_message = {
                 "role": "assistant",
-                "content": response["content"],
+                "content": agent_text,
+                "voice_tone": agent_tone,
                 "time": datetime.now()
             }
             _, new_message = self._update_conversation_context(agent_message)
-            self.voice_generator.generate_async(text=response["content"], id=new_message["id"])
+            self.voice_generator.generate_async(text=agent_text, id=new_message["id"])
 
     def _create_message_from_transcription(self, transcription):
         confirmed = transcription["confirmed_text"]
@@ -136,10 +143,13 @@ async def handle_connection(websocket):
     async def handle_context_changed(context):
         messages = context.get_messages(filter=lambda msg: not msg["handled"])
         for msg in messages:
+            content = msg["content"]
+            if "voice_tone" in msg:
+                content = f"<voice_tone: {msg['voice_tone']}> {content}"
             data = {
                 "type": "message",
                 "role": msg["role"],
-                "content": msg["content"],
+                "content": content,
                 "time": msg["time"].strftime("%H:%M:%S"),
                 "id": msg["id"]
             }
