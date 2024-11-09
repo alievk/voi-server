@@ -6,6 +6,15 @@ import random
 from loguru import logger
 
 
+user_message_format_description = """User messages are transcriptions of the user's audio.
+Transcriptions consist of confirmed words followed by unconfirmed words in parentheses.
+Confirmed words are the words reliably recognized by the speech-to-text system.
+Unconfirmed words are the words which are not reliably recognized.
+You must ignore unconfirmed words if:
+  - They are not consistent with the user's previous speech
+  """
+
+
 class ConversationContext:
     def __init__(self):
         self.messages = []
@@ -88,6 +97,8 @@ class BaseLLMAgent:
     def __init__(self, model_name, system_prompt, examples=None, output_json=False):
         if isinstance(system_prompt, list):
             system_prompt = "\n".join(system_prompt)
+
+        system_prompt = system_prompt.replace("{user_message_format_description}", user_message_format_description)
 
         self.model_name = model_name
         self.system_prompt = system_prompt
