@@ -104,17 +104,20 @@ class ConversationContext:
 
 
 class BaseLLMAgent:
-    def __init__(self, model_name, system_prompt, examples=None, output_json=False):
+    def __init__(self, model_name, system_prompt, examples=None):
         if isinstance(system_prompt, list):
             system_prompt = "\n".join(system_prompt)
 
         system_prompt = system_prompt.replace("{user_message_format_description}", user_message_format_description)
         system_prompt = system_prompt.replace("{agent_message_format_description}", agent_message_format_description)
 
+        if not model_name.startswith("openai"): # force litellm to use OpenAI API
+            model_name = f"openai/{model_name}"
+
         self.model_name = model_name
         self.system_prompt = system_prompt
         self.examples = examples
-        self.output_json = output_json
+        self.output_json = "json" in system_prompt.lower()
 
     def completion(self, context):
         assert isinstance(context, ConversationContext), f"Invalid context type {context.__class__}"
@@ -171,12 +174,11 @@ class BaseLLMAgent:
 class ResponseLLMAgent(BaseLLMAgent):
     default_content = ""
     
-    def __init__(self, system_prompt, examples=None, greetings=None):
+    def __init__(self, system_prompt, model_name="gpt-4o-mini", examples=None, greetings=None):
         super().__init__(
-            model_name="openai/openai-gpt-4o-mini", 
+            model_name=model_name,
             system_prompt=system_prompt, 
-            examples=examples,
-            output_json=True
+            examples=examples
         )
         self.greetings = greetings
 

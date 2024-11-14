@@ -76,7 +76,7 @@ class Conversation:
                 agent_tone = response["content"]["voice_tone"]
             else:
                 agent_text = response["content"]
-                agent_tone = "neutral"
+                agent_tone = None
             agent_message = {
                 "role": "assistant",
                 "content": agent_text,
@@ -85,7 +85,8 @@ class Conversation:
             }
             _, new_message = self._update_conversation_context(agent_message)
 
-            self.voice_generator.maybe_set_voice_tone(agent_tone)
+            if agent_tone:
+                self.voice_generator.maybe_set_voice_tone(agent_tone)
             self.voice_generator.generate_async(text=agent_text, id=new_message["id"])
 
     def _create_message_from_transcription(self, transcription):
@@ -234,6 +235,7 @@ async def handle_connection(websocket):
     logger.info("Initializing response agent")
     response_agent = ResponseLLMAgent(
         system_prompt=agent_config["system_prompt"],
+        model_name=agent_config["llm_model"],
         examples=agent_config["examples"],
         greetings=agent_config["greetings"]
     )
