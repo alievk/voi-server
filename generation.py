@@ -28,7 +28,9 @@ class VoiceGenerator:
         self.tts_temperature = 0.7
         self.voice = default_voice
 
-        self.tts_model, self.tts_voices = self.get_model(self.model_name, cached=cached)
+        self.tts_model_params = self.get_model(self.model_name, cached=cached)
+        self.tts_model = self.tts_model_params["model"]
+        self.tts_voices = self.tts_model_params["voices"]
 
         self.running = False
         self.text_queue = None
@@ -50,38 +52,48 @@ class VoiceGenerator:
 
         self.voice = voice
 
+    def maybe_set_voice_tone(self, voice_tone):
+        if ("voice_tone_map" in self.tts_model_params and
+            voice_tone in self.tts_model_params["voice_tone_map"]):
+            self.set_voice(self.tts_model_params["voice_tone_map"][voice_tone])
+        else:
+            logger.warning(f"Voice tone {voice_tone} not found, ignoring")
+
     @staticmethod
     def get_model(model_name, cached=False):
         if (cached and 
             VoiceGenerator._cached_tts_model_params is not None and 
             VoiceGenerator._cached_tts_model_params["model_name"] == model_name):
-            return (VoiceGenerator._cached_tts_model_params["model"], 
-                   VoiceGenerator._cached_tts_model_params["voices"])
+            return VoiceGenerator._cached_tts_model_params
 
         model_file = os.path.join(os.path.dirname(__file__), "tts_models.json")
         with open(model_file, "r") as f:
-            model_params = json.load(f)[model_name]
+            model_config = json.load(f)[model_name]
 
         config = XttsConfig()
-        config.load_json(model_params["config"])
+        config.load_json(model_config["config"])
         model = Xtts.init_from_config(config)
         model.load_checkpoint(
             config,
-            checkpoint_path=model_params["checkpoint"],
-            vocab_path=model_params["tokenizer"],
+            checkpoint_path=model_config["checkpoint"],
+            vocab_path=model_config["tokenizer"],
             use_deepspeed=False
         )
         model.cuda()
 
-        voices = torch.load(model_params["voices"])
+        voices = torch.load(model_config["voices"])
 
-        VoiceGenerator._cached_tts_model_params = {
+        model_params = {
             "model_name": model_name,
             "model": model,
-            "voices": voices
+            "voices": voices,
         }
+        if "voice_tone_map" in model_config:
+            model_params["voice_tone_map"] = model_config["voice_tone_map"]
 
-        return model, voices
+        VoiceGenerator._cached_tts_model_params = model_params
+
+        return model_params
 
     def generate(self, text, voice=None, streaming=False):
         if voice:
