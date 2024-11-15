@@ -123,7 +123,7 @@ class BaseLLMAgent:
         self.examples = examples
         self.output_json = "json" in system_prompt.lower()
 
-    def completion(self, context):
+    def completion(self, context, stream=False):
         assert isinstance(context, ConversationContext), f"Invalid context type {context.__class__}"
         
         messages = [
@@ -146,19 +146,33 @@ class BaseLLMAgent:
             model=self.model_name, 
             messages=messages, 
             response_format={"type": "json_object"} if self.output_json else None,
-            temperature=0.5
+            temperature=0.5,
+            stream=stream
         )
 
-        content = response.choices[0].message.content
-        logger.debug("Response content: {}", content)
+        if stream and self.output_json:
+            logger.warning("Streamed JSON responses are not supported, falling back to non-streamed response")
+            stream = False
 
-        if self.output_json:
-            content = json.loads(content)
+        if not stream:
+            content = response.choices[0].message.content
+            logger.debug("Response content: {}", content)
 
-        return {
-            "content": content,
-            "messages": messages
-        }
+            if self.output_json:
+                content = json.loads(content)
+
+            return {
+                "content": content,
+                "messages": messages
+            }
+
+        for chunk in response:
+            content = chunk.choices[0].delta.content
+            if content:
+                yield {
+                    "content": content,
+                    "messages": messages
+                }
 
     @staticmethod
     def format_transcription(confirmed, unconfirmed):
@@ -176,8 +190,6 @@ class BaseLLMAgent:
 
 
 class ResponseLLMAgent(BaseLLMAgent):
-    default_content = ""
-    
     def __init__(self, system_prompt, model_name="gpt-4o-mini", examples=None, greetings=None):
         super().__init__(
             model_name=model_name,
@@ -185,14 +197,6 @@ class ResponseLLMAgent(BaseLLMAgent):
             examples=examples
         )
         self.greetings = greetings
-
-    def completion(self, context, *args, **kwargs):
-        result = super().completion(context, *args, **kwargs)
-
-        if result["content"] is None:
-            result["content"] = self.default_content
-
-        return result
 
     def greeting_message(self):
         return {
