@@ -140,7 +140,7 @@ class BaseLLMAgent:
 
         messages += context.get_messages(include_fields=["role", "content"])
 
-        logger.error("Messages:\n{}", self._messages_to_text(messages))
+        logger.debug("Messages:\n{}", self._messages_to_text(messages))
         
         response = litellm.completion(
             model=self.model_name, 
