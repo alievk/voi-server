@@ -101,9 +101,9 @@ class Conversation:
             "time": datetime.now()
         }
 
-    def _update_conversation_context(self, message, force=False):
+    def _update_conversation_context(self, message):
         compare_ignore_case = lambda x, y: x.strip().lower() == y.strip().lower()
-        context_changed, changed_message = self.conversation_context.add_message(message, force=force, text_compare_f=compare_ignore_case)
+        context_changed, changed_message = self.conversation_context.add_message(message, text_compare_f=compare_ignore_case)
         if context_changed:
             asyncio.run_coroutine_threadsafe(self.context_changed_cb(self.conversation_context), self._event_loop)
         return context_changed, changed_message
