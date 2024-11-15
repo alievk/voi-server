@@ -313,9 +313,6 @@ async def handle_connection(websocket):
 ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
 ssl_context.load_cert_chain('localhost+2.pem', 'localhost+2-key.pem')
 
-litellm.api_base = "http://13.43.85.180:4000"
-litellm.api_key = "sk-1234"
-
 
 def get_timestamp():
     return datetime.now().strftime('%Y-%m-%d_%H-%M-%S')

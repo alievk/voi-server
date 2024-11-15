@@ -6,6 +6,10 @@ import random
 from loguru import logger
 
 
+litellm.api_base = "http://13.43.85.180:4000"
+litellm.api_key = "sk-1234"
+
+
 user_message_format_description = """User messages are transcriptions of the user's audio.
 Transcriptions consist of confirmed words followed by unconfirmed words in parentheses.
 Confirmed words are the words reliably recognized by the speech-to-text system.
