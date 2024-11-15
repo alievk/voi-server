@@ -5,6 +5,8 @@ import litellm
 import random
 from loguru import logger
 
+from text import SentenceStream
+
 
 litellm.api_base = "http://13.43.85.180:4000"
 litellm.api_key = "sk-1234"
@@ -121,10 +123,15 @@ class BaseLLMAgent:
         self.model_name = model_name
         self.system_prompt = system_prompt
         self.examples = examples
-        self.output_json = "json" in system_prompt.lower()
+        self._output_json = "json" in system_prompt.lower()
+
+    @property
+    def output_json(self):
+        return self._output_json
 
     def completion(self, context, stream=False):
         assert isinstance(context, ConversationContext), f"Invalid context type {context.__class__}"
+        assert not (stream and self.output_json), "Streamed JSON responses are not supported"
         
         messages = [
             {
@@ -150,10 +157,6 @@ class BaseLLMAgent:
             stream=stream
         )
 
-        if stream and self.output_json:
-            logger.warning("Streamed JSON responses are not supported, falling back to non-streamed response")
-            stream = False
-
         if not stream:
             content = response.choices[0].message.content
             logger.debug("Response content: {}", content)
@@ -161,18 +164,9 @@ class BaseLLMAgent:
             if self.output_json:
                 content = json.loads(content)
 
-            return {
-                "content": content,
-                "messages": messages
-            }
+            return content
 
-        for chunk in response:
-            content = chunk.choices[0].delta.content
-            if content:
-                yield {
-                    "content": content,
-                    "messages": messages
-                }
+        return SentenceStream(response, preprocessor=lambda x: x.choices[0].delta.content)
 
     @staticmethod
     def format_transcription(confirmed, unconfirmed):

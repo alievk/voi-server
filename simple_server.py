@@ -71,11 +71,11 @@ class Conversation:
             self.conversation_context.process_interrupted_messages()
             response = self.response_agent.completion(self.conversation_context)
 
-            if isinstance(response["content"], dict):
-                agent_text = response["content"]["text"]
-                agent_tone = response["content"]["voice_tone"]
+            if isinstance(response, dict):
+                agent_text = response["text"]
+                agent_tone = response["voice_tone"]
             else:
-                agent_text = response["content"]
+                agent_text = response
                 agent_tone = None
             agent_message = {
                 "role": "assistant",
@@ -101,9 +101,9 @@ class Conversation:
             "time": datetime.now()
         }
 
-    def _update_conversation_context(self, message):
+    def _update_conversation_context(self, message, force=False):
         compare_ignore_case = lambda x, y: x.strip().lower() == y.strip().lower()
-        context_changed, changed_message = self.conversation_context.add_message(message, text_compare_f=compare_ignore_case)
+        context_changed, changed_message = self.conversation_context.add_message(message, force=force, text_compare_f=compare_ignore_case)
         if context_changed:
             asyncio.run_coroutine_threadsafe(self.context_changed_cb(self.conversation_context), self._event_loop)
         return context_changed, changed_message
