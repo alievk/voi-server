@@ -6,9 +6,12 @@ import json
 from loguru import logger
 
 import torch
+import numpy as np
 
 from TTS.tts.configs.xtts_config import XttsConfig
 from TTS.tts.models.xtts import Xtts
+
+from text import SentenceStream
 
 
 # OK voices for the multispeaker_original model:
@@ -87,6 +90,7 @@ class VoiceGenerator:
             "model_name": model_name,
             "model": model,
             "voices": voices,
+            "max_context_len": model_config["max_context_len"]
         }
         if "voice_tone_map" in model_config:
             model_params["voice_tone_map"] = model_config["voice_tone_map"]
@@ -94,6 +98,27 @@ class VoiceGenerator:
         VoiceGenerator._cached_tts_model_params = model_params
 
         return model_params
+
+    def _split_text(self, text):
+        max_context_len = self.tts_model_params["max_context_len"]
+        text_chunks = []
+        buffer = ""
+
+        for sent in SentenceStream(text):
+            if not buffer:
+                buffer = sent
+                continue
+                
+            if len(buffer) + len(sent) <= max_context_len:
+                buffer += sent
+            else:
+                text_chunks.append(buffer)
+                buffer = sent
+
+        if buffer:
+            text_chunks.append(buffer)
+
+        return text_chunks
 
     def generate(self, text, voice=None, streaming=False):
         if voice:
@@ -116,15 +141,19 @@ class VoiceGenerator:
                 speaker_embedding=speaker_embedding,
             )
         else:
-            out = self.tts_model.inference(
-                text,
-                language=self.language,
-                temperature=self.tts_temperature,
-                gpt_cond_latent=gpt_cond_latent,
-                speaker_embedding=speaker_embedding,
-            )
+            text_chunks = self._split_text(text)
+            audio_chunks = []
+            for text_chunk in text_chunks:
+                chunk = self.tts_model.inference(
+                    text_chunk,
+                    language=self.language,
+                    temperature=self.tts_temperature,
+                    gpt_cond_latent=gpt_cond_latent,
+                    speaker_embedding=speaker_embedding,
+                )
+                audio_chunks.append(chunk["wav"])
 
-            return torch.tensor(out["wav"]).unsqueeze(0).numpy()
+            return np.concatenate(audio_chunks)
 
     def generate_async(self, text, id=None):
         if not self.running:
@@ -154,10 +183,13 @@ class VoiceGenerator:
         self,
         **kwargs
     ):
-        chunks = self.tts_model.inference_stream(**kwargs)
+        text = kwargs.pop("text")
+        text_chunks = self._split_text(text)
+        for text_chunk in text_chunks:
+            audio_chunks = self.tts_model.inference_stream(text=text_chunk, **kwargs)
 
-        for chunk in chunks:
-            yield chunk.cpu().numpy()
+            for chunk in audio_chunks:
+                yield chunk.cpu().numpy()
 
     @property
     def sample_rate(self):
