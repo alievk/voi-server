@@ -134,15 +134,8 @@ class HypothesisBuffer:
 
     def update(self, current_words):
         if self.confirmed_words:
-            #logger.debug("before fast forward:")
-            #logger.debug("unconf: {}", Word.to_text(self.unconfirmed_words))
-            #logger.debug("currnt: {}", Word.to_text(current_words))
             current_words = self._fast_forward(current_words, self.confirmed_words[-1].end)
             self.unconfirmed_words = self._fast_forward(self.unconfirmed_words, self.confirmed_words[-1].end)
-            #logger.debug("after fast forward:")
-            #logger.debug("unconf: {}", Word.to_text(self.unconfirmed_words))
-            #logger.debug("currnt: {}", Word.to_text(current_words))
-            
         if self.unconfirmed_words:
             lcp = self._longest_common_prefix(self.unconfirmed_words, current_words)
             self.confirmed_words.extend(lcp)
