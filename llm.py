@@ -1,3 +1,4 @@
+import os
 import threading
 import json
 from datetime import datetime
@@ -109,6 +110,19 @@ class ConversationContext:
                         msg["handled"] = False
 
 
+@logger.catch
+def get_agent_config(agent_name):
+    with open(os.path.join(os.path.dirname(__file__), "agents.json"), "r") as f:
+        config = json.load(f)
+
+    agent_config = config[agent_name]
+    for key, value in agent_config.items():
+        if key.endswith("_agent"):
+            agent_config[key] = get_agent_config(value)
+
+    return agent_config
+
+
 class BaseLLMAgent:
     def __init__(self, model_name, system_prompt, examples=None):
         if isinstance(system_prompt, list):
@@ -193,6 +207,23 @@ class ResponseLLMAgent(BaseLLMAgent):
         self.greetings = greetings
         self.control_agent = control_agent
 
+    @staticmethod
+    def from_config(config):
+        control_agent = None
+        if "control_agent" in config:
+            if config["control_agent"]["model"] == "pattern_matching":
+                control_agent = ControlPatternAgent.from_config(config["control_agent"])
+            else:
+                control_agent = ControlLLMAgent.from_config(config["control_agent"])
+
+        return ResponseLLMAgent(
+            system_prompt=config["system_prompt"],
+            model_name=config["llm_model"],
+            examples=config["examples"],
+            greetings=config["greetings"],
+            control_agent=control_agent
+        )
+
     def greeting_message(self):
         return {
             "role": "assistant",
@@ -209,7 +240,7 @@ class ResponseLLMAgent(BaseLLMAgent):
         temperature_schedule = self.control_agent.temperature_schedule(temperature)
         for i_try, temperature in enumerate(temperature_schedule):
             logger.debug("Control agent try {}/{}, temperature {:.2f}", i_try + 1, len(temperature_schedule), temperature)
-            response = super().completion(context, stream=False, temperature=temperature)
+            response = super().completion(context, temperature=temperature)
             if self.control_agent.classify(response):
                 return response
             logger.debug("Control agent denied response, increasing temperature")

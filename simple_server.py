@@ -18,7 +18,7 @@ import litellm
 from recognition import OnlineASR
 from generation import VoiceGenerator
 from audio import AudioOutputStream, AudioInputStream, WavSaver
-from llm import ConversationContext, BaseLLMAgent, ResponseLLMAgent, ControlPatternAgent, ControlLLMAgent
+from llm import get_agent_config, ConversationContext, BaseLLMAgent, ResponseLLMAgent, ControlPatternAgent, ControlLLMAgent
 
 
 class Conversation:
@@ -192,11 +192,6 @@ async def handle_connection(websocket):
         assert init_message["type"] == "init", f"The first message must be a JSON with 'init' type, but got: {init_message}"
         assert "agent_name" in init_message, f"The first message must contain 'agent_name' field, but got: {init_message}"
         return init_message
-
-    @logger.catch
-    def get_agent_config(agent_name):
-        with open(os.path.join(os.path.dirname(__file__), "agents.json"), "r") as f:
-            return json.load(f)[agent_name]
     
     init_message = await read_init_message(websocket)
     agent_config = get_agent_config(init_message["agent_name"])
@@ -232,23 +227,8 @@ async def handle_connection(websocket):
     )
     audio_output_stream.start()
 
-    if "control_agent" in agent_config:
-        logger.info("Initializing control agent")
-        if agent_config["control_agent"]["model"] == "pattern_matching":
-            control_agent = ControlPatternAgent.from_config(agent_config["control_agent"])
-        else:
-            control_agent = ControlLLMAgent.from_config(agent_config["control_agent"])
-    else:
-        control_agent = None
-
     logger.info("Initializing response agent")
-    response_agent = ResponseLLMAgent(
-        system_prompt=agent_config["system_prompt"],
-        model_name=agent_config["llm_model"],
-        examples=agent_config["examples"],
-        greetings=agent_config["greetings"],
-        control_agent=control_agent
-    )
+    response_agent = ResponseLLMAgent.from_config(agent_config)
     
     logger.info("Initializing conversation")
     conversation = Conversation(
