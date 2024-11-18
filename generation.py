@@ -3,6 +3,7 @@ import asyncio
 import queue
 import threading
 import json
+import re
 from loguru import logger
 
 import torch
@@ -99,6 +100,11 @@ class VoiceGenerator:
 
         return model_params
 
+    def _sanitize_text(self, text):
+        # remove *whispers* and (whispers)
+        pattern = r"\*.*?\*|\(.*?\)"
+        return re.sub(pattern, "", text)
+
     def _split_text(self, text):
         max_context_len = self.tts_model_params["max_context_len"]
         text_chunks = []
@@ -131,6 +137,8 @@ class VoiceGenerator:
 
         gpt_cond_latent = self.tts_voices[self.voice]["gpt_cond_latent"]
         speaker_embedding = self.tts_voices[self.voice]["speaker_embedding"]
+
+        text = self._sanitize_text(text)
 
         if streaming:
             return self._stream_generator(
