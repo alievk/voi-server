@@ -129,7 +129,7 @@ class BaseLLMAgent:
     def output_json(self):
         return self._output_json
 
-    def completion(self, context, stream=False):
+    def completion(self, context, stream=False, temperature=0.5):
         assert isinstance(context, ConversationContext), f"Invalid context type {context.__class__}"
         assert not (stream and self.output_json), "Streamed JSON responses are not supported"
         
@@ -153,7 +153,7 @@ class BaseLLMAgent:
             model=self.model_name, 
             messages=messages, 
             response_format={"type": "json_object"} if self.output_json else None,
-            temperature=0.5,
+            temperature=temperature,
             stream=stream
         )
 
@@ -184,13 +184,14 @@ class BaseLLMAgent:
 
 
 class ResponseLLMAgent(BaseLLMAgent):
-    def __init__(self, system_prompt, model_name="gpt-4o-mini", examples=None, greetings=None):
+    def __init__(self, system_prompt, model_name="gpt-4o-mini", examples=None, greetings=None, control_agent=None):
         super().__init__(
             model_name=model_name,
             system_prompt=system_prompt, 
             examples=examples
         )
         self.greetings = greetings
+        self.control_agent = control_agent
 
     def greeting_message(self):
         return {
@@ -198,3 +199,109 @@ class ResponseLLMAgent(BaseLLMAgent):
             "content": self.greetings[random.randint(0, len(self.greetings) - 1)],
             "time": datetime.now()
         }
+
+    def completion(self, context, stream=False, temperature=0.5):
+        assert self.control_agent is None or not stream, "Control agent does not support streaming"
+
+        if self.control_agent is None:
+            return super().completion(context, stream, temperature)
+
+        temperature_schedule = self.control_agent.temperature_schedule(temperature)
+        for i_try, temperature in enumerate(temperature_schedule):
+            logger.debug("Control agent try {}/{}, temperature {:.2f}", i_try + 1, len(temperature_schedule), temperature)
+            response = super().completion(context, stream=False, temperature=temperature)
+            if self.control_agent.classify(response):
+                return response
+            logger.debug("Control agent denied response, increasing temperature")
+
+        logger.warning("Control agent failed after {} tries", len(temperature_schedule))
+        if self.control_agent.giveup_response:
+            giveup_response = random.choice(self.control_agent.giveup_response)
+            if isinstance(response, dict):
+                response["text"] = giveup_response
+            else:
+                response = giveup_response
+            logger.debug("Control agent giving up, using fallback response: {}", giveup_response)
+        return response
+
+
+class ControlBaseAgent:
+    def __init__(self, temperature_multiplier=None, giveup_after=None, giveup_response=None):
+        self.temperature_multiplier = 1.5 if temperature_multiplier is None else temperature_multiplier
+        self.giveup_after = 3 if giveup_after is None else giveup_after
+        self.giveup_response = giveup_response
+
+    def temperature_schedule(self, temperature_0):
+        return [temperature_0 * self.temperature_multiplier ** i for i in range(self.giveup_after)]
+
+    def classify(self, response):
+        raise NotImplementedError
+
+
+class ControlPatternAgent(ControlBaseAgent):
+    def __init__(self, denial_phrases, temperature_multiplier=None, giveup_after=None, giveup_response=None):
+        super().__init__(temperature_multiplier, giveup_after, giveup_response)
+        self.denial_phrases = denial_phrases
+
+    @staticmethod
+    def from_config(config):
+        return ControlPatternAgent(
+            denial_phrases=config["denial_phrases"],
+            temperature_multiplier=config.get("temperature_multiplier"),
+            giveup_after=config.get("giveup_after"),
+            giveup_response=config.get("giveup_response")
+        )
+
+    def classify(self, response):
+        if isinstance(response, dict):
+            response_text = response["text"]
+        else:
+            response_text = response
+
+        for phrase in self.denial_phrases:
+            if phrase.lower() in response_text.lower():
+                return False
+
+        return True
+
+
+class ControlLLMAgent(BaseLLMAgent):
+    def __init__(self, system_prompt, denial_classes: list[str], model_name="gpt-4o-mini", examples=None, temperature_multiplier=None, giveup_after=None, giveup_response=None):
+        super().__init__(
+            model_name=model_name, 
+            system_prompt=system_prompt, 
+            examples=examples,
+            temperature_multiplier=temperature_multiplier,
+            giveup_after=giveup_after,
+            giveup_response=giveup_response
+        )
+        assert self.output_json, "Control agent must be used with JSON responses"
+        self.denial_classes = denial_classes
+
+    @staticmethod
+    def from_config(config):
+        return ControlLLMAgent(
+            system_prompt=config["system_prompt"],
+            denial_classes=config["denial_classes"],
+            model_name=config.get("model"),
+            examples=config.get("examples"),
+            temperature_multiplier=config.get("temperature_multiplier"),
+            giveup_after=config.get("giveup_after"),
+            giveup_response=config.get("giveup_response")
+        )
+
+    def classify(self, response):
+        if isinstance(response, dict):
+            response_text = response["text"]
+        else:
+            response_text = response
+
+        context = ConversationContext()
+        context.add_message({"role": "user", "content": response_text})
+        control_response = super().completion(context)
+
+        if control_response["class"] in self.denial_classes:
+            return False
+        
+        return True
+
