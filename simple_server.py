@@ -127,9 +127,6 @@ async def handle_connection(websocket):
 
     logger.info("New connection is started")
 
-    def convert_f32le_to_s16le(buffer):
-        return (buffer * 32768.0).astype(np.int16).tobytes()
-
     def serialize_message(metadata, blob=None):
         metadata = json.dumps(metadata).encode('utf-8')
         metadata_length = len(metadata).to_bytes(4, byteorder='big')
@@ -143,7 +140,7 @@ async def handle_connection(websocket):
         # audio_chunk is f32le
         await conversation.handle_input_audio(audio_chunk)
         if audio_chunk is not None:
-            audio_input_saver.write(convert_f32le_to_s16le(audio_chunk))
+            audio_input_saver.write(audio_chunk)
 
     @logger.catch
     async def handle_context_changed(context):
@@ -172,7 +169,7 @@ async def handle_connection(websocket):
             conversation.on_assistant_audio_end(speech_id, duration)
         else:
             audio_output_stream.put(audio_chunk)
-            audio_output_saver.write(convert_f32le_to_s16le(audio_chunk))
+            audio_output_saver.write(audio_chunk)
             last_assistant_speech_id = speech_id # hack
 
     @logger.catch
