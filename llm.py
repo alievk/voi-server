@@ -25,10 +25,11 @@ agent_message_format_description = """Respond with the following JSON object:
 {"text": "<agent response text>", "voice_tone": "<voice tone>"}
 <voice_tone> is used by the voice generator to choose the appropriate voice and intonation for <agent response text>.
 <voice_tone> is strictly one of the following:
-  - "neutral": the voice tone is normal, neutral
-  - "passionate": the voice tone is passionate, like a declaration of love or a passionate conversation
-  - "excited": the voice tone is excited, like a happy announcement or an excited conversation
-  - "sad": the voice tone is sad, like a sad story or a sad conversation
+  - "neutral": conversation is normal, neutral, like a business conversation or a conversation with a new acquaintance or a stranger
+  - "warm": conversation is warm, like a conversation with a friend or a conversation with a partner
+  - "erotic": conversation is about sex, love, or romance
+  - "excited": conversation is excited, like a happy announcement or surprising news
+  - "sad": conversation is sad, like a sad story or a sad conversation
 """
 
 
@@ -225,9 +226,11 @@ class ResponseLLMAgent(BaseLLMAgent):
         )
 
     def greeting_message(self):
+        greeting = random.choice(self.greetings["choices"])
         return {
             "role": "assistant",
-            "content": self.greetings[random.randint(0, len(self.greetings) - 1)],
+            "content": greeting,
+            "voice_tone": self.greetings.get("voice_tone"),
             "time": datetime.now()
         }
 
