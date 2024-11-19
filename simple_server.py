@@ -38,7 +38,9 @@ class Conversation:
         self._event_loop = asyncio.get_event_loop()
 
     def greeting(self):
-        _, message = self._update_conversation_context(self.response_agent.greeting_message())
+        message = self.response_agent.greeting_message()
+        _, message = self._update_conversation_context(message)
+        self.voice_generator.maybe_set_voice_tone(message.get("voice_tone"))
         self.voice_generator.generate_async(text=message["content"], id=message["id"])
 
     @logger.catch
@@ -205,7 +207,7 @@ async def handle_connection(websocket):
     voice_generator = VoiceGenerator(
         cached=True,
         model_name=agent_config["tts_model"],
-        default_voice=agent_config["default_voice"],
+        voice=agent_config.get("voice"),
         generated_audio_cb=handle_generated_audio
     )
     voice_generator.start()

@@ -21,7 +21,7 @@ from text import SentenceStream
 class VoiceGenerator:
     _cached_tts_model_params = None
 
-    def __init__(self, generated_audio_cb=None, model_name=None, default_voice=None, cached=False):
+    def __init__(self, generated_audio_cb=None, model_name=None, voice=None, cached=False):
         """ 
         generated_audio_cb receives f32le audio chunks 
         valid model_name values are listed in tts_models.json
@@ -30,7 +30,7 @@ class VoiceGenerator:
         self.model_name = "multispeaker_original" if model_name is None else model_name
         self.language = 'en'
         self.tts_temperature = 0.7
-        self.voice = default_voice
+        self.voice = voice
 
         self.tts_model_params = self.get_model(self.model_name, cached=cached)
         self.tts_model = self.tts_model_params["model"]
