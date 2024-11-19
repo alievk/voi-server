@@ -10,6 +10,10 @@ import numpy as np
 from loguru import logger
 
 
+def convert_f32le_to_s16le(buffer):
+    return (buffer * 32768.0).astype(np.int16).tobytes()
+
+
 class WavSaver:
     def __init__(self, filename, channels=1, sample_width=2, sample_rate=16000, buffer_size=1024*1024):
         self.filename = filename
@@ -22,7 +26,10 @@ class WavSaver:
         self._create_wav_file()
 
     def write(self, chunk):
-        """ Input format is s16le """
+        """ Input format is s16le (buffer) or f32le (numpy array) """
+        if np.issubdtype(chunk.dtype, np.floating):
+            chunk = convert_f32le_to_s16le(chunk)
+
         self.buffer += chunk
         if len(self.buffer) >= self.buffer_size:
             self._flush_buffer()
