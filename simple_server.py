@@ -40,8 +40,12 @@ class Conversation:
     def greeting(self):
         message = self.response_agent.greeting_message()
         _, message = self._update_conversation_context(message)
-        self.voice_generator.maybe_set_voice_tone(message.get("voice_tone"))
-        self.voice_generator.generate_async(text=message["content"], id=message["id"])
+
+        if message.get("file"):
+            self.voice_generator.generate_async(text=f"file:{message['file']}", id=message["id"])
+        else:
+            self.voice_generator.maybe_set_voice_tone(message.get("voice_tone"))
+            self.voice_generator.generate_async(text=message["content"], id=message["id"])
 
     @logger.catch
     async def handle_input_audio(self, audio_chunk):

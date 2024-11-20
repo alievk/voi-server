@@ -227,9 +227,17 @@ class ResponseLLMAgent(BaseLLMAgent):
 
     def greeting_message(self):
         greeting = random.choice(self.greetings["choices"])
+        if isinstance(greeting, dict):
+            content = greeting["content"]
+            file = greeting["file"]
+        else:
+            content = greeting
+            file = None
+
         return {
             "role": "assistant",
-            "content": greeting,
+            "content": content,
+            "file": file,
             "voice_tone": self.greetings.get("voice_tone"),
             "time": datetime.now()
         }

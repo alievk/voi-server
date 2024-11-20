@@ -4,6 +4,7 @@ import queue
 import threading
 import json
 import re
+import librosa
 from loguru import logger
 
 import torch
@@ -177,12 +178,17 @@ class VoiceGenerator:
 
             text, id = item["text"], item["id"]
 
-            duration = 0.0
-            for chunk in self.generate(text, streaming=True):
-                asyncio.run_coroutine_threadsafe(self.generated_audio_cb(audio_chunk=chunk, speech_id=id), self._event_loop)
-                duration += len(chunk) / self.sample_rate
-                if not self.running or not self.text_queue.empty(): # stop on new text or interrupt
-                    break
+            if text.startswith("file:"):
+                audio_chunk, sr = librosa.load(text[5:], sr=None)
+                duration = len(audio_chunk) / sr
+                asyncio.run_coroutine_threadsafe(self.generated_audio_cb(audio_chunk=audio_chunk, speech_id=id), self._event_loop)
+            else:
+                duration = 0.0
+                for chunk in self.generate(text, streaming=True):
+                    asyncio.run_coroutine_threadsafe(self.generated_audio_cb(audio_chunk=chunk, speech_id=id), self._event_loop)
+                    duration += len(chunk) / self.sample_rate
+                    if not self.running or not self.text_queue.empty(): # stop on new text or interrupt
+                        break
 
             # end of generation
             asyncio.run_coroutine_threadsafe(self.generated_audio_cb(audio_chunk=None, speech_id=id, duration=duration), self._event_loop)
