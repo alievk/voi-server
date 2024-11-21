@@ -198,7 +198,7 @@ class BaseLLMAgent:
         return "\n".join([f"{msg['role']}: {msg['content']}" for msg in messages])
 
 
-class ResponseLLMAgent(BaseLLMAgent):
+class CharacterLLMAgent(BaseLLMAgent):
     def __init__(self, system_prompt, model_name="gpt-4o-mini", examples=None, greetings=None, control_agent=None):
         super().__init__(
             model_name=model_name,
@@ -217,7 +217,7 @@ class ResponseLLMAgent(BaseLLMAgent):
             else:
                 control_agent = ControlLLMAgent.from_config(config["control_agent"])
 
-        return ResponseLLMAgent(
+        return CharacterLLMAgent(
             system_prompt=config["system_prompt"],
             model_name=config["llm_model"],
             examples=config["examples"],

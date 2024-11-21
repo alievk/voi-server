@@ -18,7 +18,7 @@ import litellm
 from recognition import OnlineASR
 from generation import VoiceGenerator
 from audio import AudioOutputStream, AudioInputStream, WavSaver
-from llm import get_agent_config, ConversationContext, BaseLLMAgent, ResponseLLMAgent, ControlPatternAgent, ControlLLMAgent
+from llm import get_agent_config, ConversationContext, BaseLLMAgent, CharacterLLMAgent, ControlPatternAgent, ControlLLMAgent
 
 
 class Conversation:
@@ -231,7 +231,7 @@ async def handle_connection(websocket):
     audio_output_stream.start()
 
     logger.info("Initializing response agent")
-    response_agent = ResponseLLMAgent.from_config(agent_config)
+    response_agent = CharacterLLMAgent.from_config(agent_config)
     
     logger.info("Initializing conversation")
     conversation = Conversation(
