@@ -208,9 +208,9 @@ async def handle_connection(websocket):
     voice_generator = VoiceGenerator(
         cached=True,
         model_name=agent_config["tts_model"],
-        voice=agent_config.get("voice"),
         generated_audio_cb=handle_generated_audio
     )
+    voice_generator.maybe_set_voice_tone(agent_config["narrator_voice_tone"], role="narrator")
     voice_generator.start()
 
     logger.info("Initializing audio input stream")

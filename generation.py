@@ -4,6 +4,7 @@ import queue
 import threading
 import json
 import re
+import itertools
 import librosa
 from loguru import logger
 
@@ -22,7 +23,14 @@ from text import SentenceStream
 class VoiceGenerator:
     _cached_tts_model_params = None
 
-    def __init__(self, generated_audio_cb=None, model_name=None, voice=None, cached=False):
+    def __init__(
+        self,
+        generated_audio_cb=None,
+        model_name=None,
+        voice=None,
+        narrator_voice=None,
+        cached=False
+    ):
         """ 
         generated_audio_cb receives f32le audio chunks 
         valid model_name values are listed in tts_models.json
@@ -31,11 +39,14 @@ class VoiceGenerator:
         self.model_name = "multispeaker_original" if model_name is None else model_name
         self.language = 'en'
         self.tts_temperature = 0.7
-        self.voice = voice
 
         self.tts_model_params = self.get_model(self.model_name, cached=cached)
         self.tts_model = self.tts_model_params["model"]
         self.tts_voices = self.tts_model_params["voices"]
+
+        default_voice = list(self.tts_voices.keys())[0]
+        self.voice = default_voice if voice is None else voice
+        self.narrator_voice = default_voice if narrator_voice is None else narrator_voice
 
         self.running = False
         self.text_queue = None
@@ -51,16 +62,20 @@ class VoiceGenerator:
         self.model_name = model_name
         self.tts_model, self.tts_voices = self.get_model(self.model_name, cached=cached)
 
-    def set_voice(self, voice):
+    def set_voice(self, voice, role="character"):
         if voice not in self.tts_voices:
             raise ValueError(f"Voice {voice} not found")
 
-        self.voice = voice
+        assert role in ["character", "narrator"]
+        if role == "character":
+            self.voice = voice
+        else:
+            self.narrator_voice = voice
 
-    def maybe_set_voice_tone(self, voice_tone):
+    def maybe_set_voice_tone(self, voice_tone, role="character"):
         if ("voice_tone_map" in self.tts_model_params and
             voice_tone in self.tts_model_params["voice_tone_map"]):
-            self.set_voice(self.tts_model_params["voice_tone_map"][voice_tone])
+            self.set_voice(self.tts_model_params["voice_tone_map"][voice_tone], role=role)
         else:
             logger.warning(f"Voice tone {voice_tone} not found, ignoring")
 
@@ -102,60 +117,73 @@ class VoiceGenerator:
         return model_params
 
     def _sanitize_text(self, text):
-        # remove *whispers* and (whispers)
-        pattern = r"\*.*?\*|\(.*?\)"
-        return re.sub(pattern, "", text)
+        return text
 
-    def _split_text(self, text):
-        """
-        Split text into chunks that fit the TTS model context length.
-        """
-        max_context_len = self.tts_model_params["max_context_len"]
-        text_chunks = []
+    def _split_into_chunks(self, text):
+        chunks = []
         buffer = ""
-
+        max_len = self.tts_model_params["max_context_len"]
+        
         for sent in SentenceStream(text):
             if not buffer:
                 buffer = sent
                 continue
-                
-            if len(buffer) + len(sent) <= max_context_len:
-                buffer += sent
+            if len(buffer) + len(sent) <= max_len:
+                buffer += ' ' + sent
             else:
-                text_chunks.append(buffer)
+                chunks.append(buffer)
                 buffer = sent
-
+                
         if buffer:
-            text_chunks.append(buffer)
+            chunks.append(buffer)
+        return chunks
 
-        return text_chunks
+    def _split_into_speech_segments(self, text):
+        parts = []
+        last_end = 0
+        
+        for match in re.finditer(r"\*([^*]+)\*", text):
+            if match.start() > last_end:
+                parts.extend({"text": chunk, "role": "character"} 
+                            for chunk in self._split_into_chunks(text[last_end:match.start()].strip()))
+            
+            parts.extend({"text": chunk, "role": "narrator"}
+                        for chunk in self._split_into_chunks(match.group(1).strip()))
+            
+            last_end = match.end()
+        
+        if last_end < len(text):
+            parts.extend({"text": chunk, "role": "character"}
+                        for chunk in self._split_into_chunks(text[last_end:]))
 
-    def generate(self, text, voice=None, streaming=False):
-        if voice:
-            self.set_voice(voice)
+        return [p for p in parts if p["text"]]
 
-        if self.voice is None:
-            voice = list(self.tts_voices.keys())[0]
-            self.set_voice(voice)
-            logger.warning(f"No voice specified, using the first available voice: {voice}")
+    def generate(self, text, streaming=False):
+        segments = self._split_into_speech_segments(text)
+        print(segments)
 
-        gpt_cond_latent = self.tts_voices[self.voice]["gpt_cond_latent"]
-        speaker_embedding = self.tts_voices[self.voice]["speaker_embedding"]
-
-        text = self._sanitize_text(text)
+        text_chunks = []
+        gpt_cond_latent = []
+        speaker_embedding = []
+        for segment in segments:
+            text_chunks.append(segment["text"])
+            voice = self.voice if segment["role"] == "character" else self.narrator_voice
+            gpt_cond_latent.append(self.tts_voices[voice]["gpt_cond_latent"])
+            speaker_embedding.append(self.tts_voices[voice]["speaker_embedding"])
 
         if streaming:
-            return self._stream_generator(
-                text=text,
-                language=self.language,
-                temperature=self.tts_temperature,
-                gpt_cond_latent=gpt_cond_latent,
-                speaker_embedding=speaker_embedding,
+            return itertools.chain.from_iterable(
+                self._stream_generator(
+                    text_chunk,
+                    gpt_cond_latent,
+                    speaker_embedding
+                )
+                for text_chunk, gpt_cond_latent, speaker_embedding 
+                in zip(text_chunks, gpt_cond_latent, speaker_embedding)
             )
         else:
-            text_chunks = self._split_text(text)
             audio_chunks = []
-            for text_chunk in text_chunks:
+            for text_chunk, gpt_cond_latent, speaker_embedding in zip(text_chunks, gpt_cond_latent, speaker_embedding):
                 chunk = self.tts_model.inference(
                     text_chunk,
                     language=self.language,
@@ -198,15 +226,20 @@ class VoiceGenerator:
 
     def _stream_generator(
         self,
-        **kwargs
+        text,
+        gpt_cond_latent,
+        speaker_embedding,
     ):
-        text = kwargs.pop("text")
-        text_chunks = self._split_text(text)
-        for text_chunk in text_chunks:
-            audio_chunks = self.tts_model.inference_stream(text=text_chunk, **kwargs)
+        audio_chunks = self.tts_model.inference_stream(
+            text=text,
+            language=self.language,
+            temperature=self.tts_temperature,
+            gpt_cond_latent=gpt_cond_latent,
+            speaker_embedding=speaker_embedding,
+        )
 
-            for chunk in audio_chunks:
-                yield chunk.cpu().numpy()
+        for chunk in audio_chunks:
+            yield chunk.cpu().numpy()
 
     @property
     def sample_rate(self):
