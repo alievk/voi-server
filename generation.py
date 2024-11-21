@@ -107,6 +107,9 @@ class VoiceGenerator:
         return re.sub(pattern, "", text)
 
     def _split_text(self, text):
+        """
+        Split text into chunks that fit the TTS model context length.
+        """
         max_context_len = self.tts_model_params["max_context_len"]
         text_chunks = []
         buffer = ""
