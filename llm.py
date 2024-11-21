@@ -21,16 +21,34 @@ You must ignore unconfirmed words if:
   - They are not consistent with the user's previous speech
   """
 
-agent_message_format_description = """Respond with the following JSON object:
-{"text": "<agent response text>", "voice_tone": "<voice tone>"}
-<voice_tone> is used by the voice generator to choose the appropriate voice and intonation for <agent response text>.
-<voice_tone> is strictly one of the following:
+voice_tone_description = """<character voice tone> is used by the voice generator to choose the appropriate voice and intonation for <character response text>.
+<character voice tone> is strictly one of the following:
   - "neutral": conversation is normal, neutral, like a business conversation or a conversation with a new acquaintance or a stranger
   - "warm": conversation is warm, like a conversation with a friend or a conversation with a partner
   - "erotic": conversation is about sex, love, or romance
   - "excited": conversation is excited, like a happy announcement or surprising news
   - "sad": conversation is sad, like a sad story or a sad conversation
 """
+
+action_beats_description = """<character response text> contains character response with action beats.
+Examples:
+  - Are you serious?! *her eyes widened* How are you going to do that?
+  - *he looks down* I'm not sure I can do that.
+  - I'm glad you're here. *she rushed to hug him*
+"""
+
+character_agent_message_format_voice_tone = (
+    "Respond with the following JSON object:"
+    '{"text": "<character response text>", "voice_tone": "<character voice tone>"}'
+    f"\n{voice_tone_description}"
+)
+
+character_agent_message_format_action_beats = (
+    "Respond with the following JSON object:"
+    '{"text": "<character response text>", "voice_tone": "<character voice tone>"}'
+    f"\n{voice_tone_description}"
+    f"\n{action_beats_description}"
+)
 
 
 class ConversationContext:
@@ -130,7 +148,8 @@ class BaseLLMAgent:
             system_prompt = "\n".join(system_prompt)
 
         system_prompt = system_prompt.replace("{user_message_format_description}", user_message_format_description)
-        system_prompt = system_prompt.replace("{agent_message_format_description}", agent_message_format_description)
+        system_prompt = system_prompt.replace("{character_agent_message_format_voice_tone}", character_agent_message_format_voice_tone)
+        system_prompt = system_prompt.replace("{character_agent_message_format_action_beats}", character_agent_message_format_action_beats)
 
         if not model_name.startswith("openai"): # force litellm to use OpenAI API
             model_name = f"openai/{model_name}"
