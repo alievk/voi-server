@@ -30,7 +30,8 @@ voice_tone_description = """<character voice tone> is used by the voice generato
   - "sad": conversation is sad, like a sad story or a sad conversation
 """
 
-action_beats_description = """<character response text> contains character response with action beats.
+narrator_comment_format_description = """<character response text> contains comments made by the narrator.
+The comments are always in the third person and enclosed in asterisks.
 Examples:
   - Are you serious?! *her eyes widened* How are you going to do that?
   - *he looks down* I'm not sure I can do that.
@@ -47,7 +48,7 @@ character_agent_message_format_action_beats = (
     "Respond with the following JSON object:"
     '{"text": "<character response text>", "voice_tone": "<character voice tone>"}'
     f"\n{voice_tone_description}"
-    f"\n{action_beats_description}"
+    f"\n{narrator_comment_format_description}"
 )
 
 
