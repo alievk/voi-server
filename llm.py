@@ -152,8 +152,8 @@ class BaseLLMAgent:
         system_prompt = system_prompt.replace("{character_agent_message_format_voice_tone}", character_agent_message_format_voice_tone)
         system_prompt = system_prompt.replace("{character_agent_message_format_action_beats}", character_agent_message_format_action_beats)
 
-        if not model_name.startswith("openai"): # force litellm to use OpenAI API
-            model_name = f"openai/{model_name}"
+        # force litellm to use OpenAI API if no provider is specified
+        model_name = f"openai/{model_name}" if "/" not in model_name else model_name
 
         self.model_name = model_name
         self.system_prompt = system_prompt
