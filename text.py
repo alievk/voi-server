@@ -6,6 +6,7 @@ import nltk
 class SentenceStream:
     def __init__(self, generator, preprocessor=None):
         nltk.download('punkt', quiet=True)
+        nltk.download('punkt_tab', quiet=True)
         self.generator = generator
         self.preprocessor = preprocessor
         self.buffer = ""
