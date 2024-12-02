@@ -146,13 +146,22 @@ async def handle_connection(websocket):
         if audio_chunk is not None:
             audio_input_saver.write(audio_chunk)
 
+    def get_emoji(voice_tone):
+        return {
+            "neutral": "😐",
+            "warm": "😊",
+            "erotic": "😍",
+            "excited": "😃",
+            "sad": "😔"
+        }[voice_tone]
+
     @logger.catch
     async def handle_context_changed(context):
         messages = context.get_messages(filter=lambda msg: not msg["handled"])
         for msg in messages:
             content = msg["content"]
             if "voice_tone" in msg:
-                content = f"<voice_tone: {msg['voice_tone']}> {content}"
+                content = get_emoji(msg['voice_tone']) + " " + content
             data = {
                 "type": "message",
                 "role": msg["role"],
