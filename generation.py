@@ -31,6 +31,7 @@ class VoiceGenerator:
         model_name=None,
         voice=None,
         narrator_voice=None,
+        mute_narrator=False,
         cached=False
     ):
         """ 
@@ -49,6 +50,7 @@ class VoiceGenerator:
         default_voice = list(self.tts_voices.keys())[0]
         self.voice = default_voice if voice is None else voice
         self.narrator_voice = default_voice if narrator_voice is None else narrator_voice
+        self.mute_narrator = mute_narrator
 
         self.running = False
         self.text_queue = None
@@ -168,6 +170,8 @@ class VoiceGenerator:
         gpt_cond_latent = []
         speaker_embedding = []
         for segment in segments:
+            if self.mute_narrator and segment["role"] == "narrator":
+                continue
             text_chunks.append(segment["text"])
             voice = self.voice if segment["role"] == "character" else self.narrator_voice
             gpt_cond_latent.append(self.tts_voices[voice]["gpt_cond_latent"])
