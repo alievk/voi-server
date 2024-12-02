@@ -12,6 +12,7 @@ loguru
 
 ffmpeg
 librosa
+audiostretchy==1.3.5
 
 torch==2.3
 torchvision==0.18.0

@@ -4,6 +4,9 @@ import subprocess
 import threading
 import multiprocessing
 import wave
+from audiostretchy.stretch import AudioStretch
+import soundfile as sf
+import io
 
 import numpy as np
 
@@ -229,3 +232,33 @@ class AudioOutputStream:
     def flush(self):
         self.stop()
         self.start()
+
+
+def adjust_speed(audio, speed, sample_rate):
+    input_file = io.BytesIO()
+    sf.write(input_file, audio, sample_rate, format="wav")
+    input_file.seek(0)
+
+    audio_stretch = AudioStretch()
+    audio_stretch.open(file=input_file, format="wav")
+    
+    audio_stretch.stretch(
+        ratio=1.0 / speed,
+        gap_ratio=1.2,
+        upper_freq=333,
+        lower_freq=55,
+        buffer_ms=25,
+        threshold_gap_db=-40,
+        double_range=False,
+        fast_detection=False,
+        normal_detection=False,
+    )
+
+    output_buffer = io.BytesIO()
+    output_buffer.close = lambda: None
+    audio_stretch.save(file=output_buffer, format="wav")
+
+    output_buffer.seek(0)
+    processed_audio, _ = sf.read(output_buffer, dtype="float32")
+
+    return processed_audio

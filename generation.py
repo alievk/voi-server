@@ -11,6 +11,8 @@ from loguru import logger
 import torch
 import numpy as np
 
+from audio import adjust_speed
+
 from TTS.tts.configs.xtts_config import XttsConfig
 from TTS.tts.models.xtts import Xtts
 
@@ -107,7 +109,8 @@ class VoiceGenerator:
             "model_name": model_name,
             "model": model,
             "voices": voices,
-            "max_context_len": model_config["max_context_len"]
+            "max_context_len": model_config["max_context_len"],
+            "speed": model_config.get("speed", 1.0)
         }
         if "voice_tone_map" in model_config:
             model_params["voice_tone_map"] = model_config["voice_tone_map"]
@@ -160,7 +163,6 @@ class VoiceGenerator:
 
     def generate(self, text, streaming=False):
         segments = self._split_into_speech_segments(text)
-        print(segments)
 
         text_chunks = []
         gpt_cond_latent = []
@@ -193,7 +195,7 @@ class VoiceGenerator:
                 )
                 audio_chunks.append(chunk["wav"])
 
-            return np.concatenate(audio_chunks)
+            return self._postprocess(np.concatenate(audio_chunks))
 
     def generate_async(self, text, id=None):
         if not self.running:
@@ -239,11 +241,17 @@ class VoiceGenerator:
         )
 
         for chunk in audio_chunks:
-            yield chunk.cpu().numpy()
+            yield self._postprocess(chunk.cpu().numpy())
 
     @property
     def sample_rate(self):
         return 24000
+
+    def _postprocess(self, chunk):
+        # I was not able to get speed control working for streaming audio,
+        # so I'm just returning the chunk as is for now
+        # return adjust_speed(chunk, self.tts_model_params["speed"], self.sample_rate)
+        return chunk
 
     def stop(self):
         self.running = False
