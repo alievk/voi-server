@@ -40,7 +40,7 @@ character_agent_message_format_voice_tone = (
     f"\n{voice_tone_description}"
 )
 
-character_agent_message_format_action_beats = (
+character_agent_message_format_narrator_comments = (
     "Respond with the following JSON object:"
     '{"text": "<character response text>", "voice_tone": "<character voice tone>"}'
     f"\n{voice_tone_description}"
@@ -146,7 +146,7 @@ class BaseLLMAgent:
 
         system_prompt = system_prompt.replace("{user_message_format_description}", user_message_format_description)
         system_prompt = system_prompt.replace("{character_agent_message_format_voice_tone}", character_agent_message_format_voice_tone)
-        system_prompt = system_prompt.replace("{character_agent_message_format_action_beats}", character_agent_message_format_action_beats)
+        system_prompt = system_prompt.replace("{character_agent_message_format_narrator_comments}", character_agent_message_format_narrator_comments)
 
         # force litellm to use OpenAI API if no provider is specified
         model_name = f"openai/{model_name}" if "/" not in model_name else model_name
