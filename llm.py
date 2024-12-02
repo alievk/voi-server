@@ -9,10 +9,6 @@ from loguru import logger
 from text import SentenceStream
 
 
-litellm.api_base = "http://13.43.85.180:4000"
-litellm.api_key = "sk-1234"
-
-
 user_message_format_description = """User messages are transcriptions of the user's audio.
 Transcriptions consist of confirmed words followed by unconfirmed words in parentheses.
 Confirmed words are the words reliably recognized by the speech-to-text system.
@@ -367,3 +363,19 @@ class ControlLLMAgent(BaseLLMAgent):
         
         return True
 
+
+def _setup_litellm():
+    import dotenv
+    dotenv.load_dotenv()
+
+    api_base = os.getenv("LITELLM_API_BASE")
+    api_key = os.getenv("LITELLM_API_KEY")
+    
+    if not api_base or not api_key:
+        raise EnvironmentError("LITELLM_API_BASE and LITELLM_API_KEY must be defined in environment variables")
+
+    litellm.api_base = api_base
+    litellm.api_key = api_key
+
+
+_setup_litellm()
