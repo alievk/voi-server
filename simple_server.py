@@ -153,7 +153,7 @@ async def handle_connection(websocket):
             "erotic": "😍",
             "excited": "😃",
             "sad": "😔"
-        }[voice_tone]
+        }.get(voice_tone, "😐")
 
     @logger.catch
     async def handle_context_changed(context):
