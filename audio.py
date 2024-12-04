@@ -57,7 +57,10 @@ class WavSaver:
 
 class AudioInputStream:
     def __init__(self, converted_audio_cb, chunk_size_ms=1000, input_sample_rate=16000, output_sample_rate=16000):
-        """ converted_audio_cb receives f32le audio chunks """
+        """
+        Asyncronous WebM to f32le conversion.
+        - converted_audio_cb receives f32le audio chunks
+        """
         self.input_sample_rate = input_sample_rate
         self.output_sample_rate = output_sample_rate
         self.ffmpeg_process = None
@@ -163,7 +166,10 @@ class AudioInputStream:
 
 class AudioOutputStream:
     def __init__(self, converted_audio_cb, input_sample_rate=16000, output_sample_rate=16000):
-        """ converted_audio_cb receives webm audio chunks """
+        """
+        Asyncronous f32le to WebM conversion.
+        - converted_audio_cb receives webm audio chunks
+        """
         self.converted_audio_cb = converted_audio_cb
         self._event_loop = asyncio.get_event_loop()
 

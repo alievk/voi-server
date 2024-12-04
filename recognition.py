@@ -223,6 +223,9 @@ class OfflineASR:
 
 class OnlineASR:
     def __init__(self, context_length=ASR_CONTEXT_LENGTH, language='en', cached=False):
+        """
+        context_length: number of words to condition on
+        """
         self.context_length = context_length
         self.audio_buffer = None
         self.h_buffer = None
