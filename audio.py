@@ -6,11 +6,16 @@ import multiprocessing
 import wave
 from audiostretchy.stretch import AudioStretch
 import soundfile as sf
+import librosa
 import io
 
 import numpy as np
 
 from loguru import logger
+
+
+def load_audio(fname, sr=None, duration=None):
+    return librosa.load(fname, sr=sr, dtype=np.float32, duration=duration)
 
 
 def convert_f32le_to_s16le(buffer):
@@ -53,6 +58,44 @@ class WavSaver:
         self._flush_buffer()
         if self.wav_file:
             self.wav_file.close()
+
+
+class FakeAudioStream:
+    def __init__(self, filename, chunk_length=0.1, duration=None, sr=None):
+        """
+        - chunk_length: length of the chunk to read in seconds
+        - duration: maximum duration of the audio to read in seconds
+        """
+        self.audio, self.sr = load_audio(filename, sr=sr, duration=duration)
+        self.duration = self.audio.shape[0] / self.sr
+        self.chunk_length = chunk_length
+        self.beg = 0
+        logger.debug("Loaded audio is {:.2f} seconds", self.duration)
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        chunk, beg = self.read(self.chunk_length)
+        if chunk is None:
+            raise StopIteration
+        return chunk, beg
+
+    def read(self, chunk_length):
+        beg = self.beg
+        end = min(self.duration, beg + chunk_length)
+        chunk = None
+        if beg < end:
+            beg_idx = int(beg * self.sr)
+            end_idx = int(end * self.sr)
+            chunk = self.audio[beg_idx:end_idx]
+            self.beg = end
+        else:
+            logger.debug("End of stream")
+        return chunk, beg
+
+    def fast_forward(self, time):
+        self.beg = min(self.duration, time)
 
 
 class AudioInputStream:

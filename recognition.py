@@ -1,8 +1,5 @@
 import numpy as np
 import librosa
-import soundfile
-import time
-import torch
 from loguru import logger
 
 import whisperx
@@ -16,37 +13,6 @@ MAX_AUDIO_BUFFER_DURATION = 15 # seconds
 FAST_FORWARD_TIME_MARGIN = 0.1 # seconds
 
 ASR_CONTEXT_LENGTH = 200 # words
-
-
-def load_audio(fname, sr):
-    a, _ = librosa.load(fname, sr=sr, dtype=np.float32)
-    return a
-
-
-class FakeAudioStream:
-    def __init__(self, filename, sr=SAMPLING_RATE):
-        self.audio = load_audio(filename, sr)
-        self.duration = len(self.audio) / sr
-        self.sr = sr
-        self.beg = 0
-
-        logger.debug("Loaded audio is {:.2f} seconds", self.duration)
-
-    def read(self, chunk_length):
-        beg = self.beg
-        end = min(self.duration, beg + chunk_length)
-        chunk = None
-        if beg < end:
-            beg_idx = int(beg * self.sr)
-            end_idx = int(end * self.sr)
-            chunk = self.audio[beg_idx:end_idx]
-            self.beg = end
-        else:
-            logger.debug("End of stream")
-        return chunk, beg
-
-    def fast_forward(self, time):
-        self.beg = min(self.duration, time)
 
 
 class AudioBuffer:
