@@ -19,10 +19,59 @@ from TTS.tts.models.xtts import Xtts
 from text import SentenceStream
 
 
+class VoiceGeneratorBase:
+    def generate(self, text, streaming=False):
+        raise NotImplementedError
+
+    def generate_async(self, text, id=None):
+        raise NotImplementedError
+
+    def maybe_set_voice_tone(self, voice_tone, role="character"):
+        raise NotImplementedError
+
+    def start(self):
+        raise NotImplementedError
+
+    def stop(self):
+        raise NotImplementedError
+
+    @property
+    def sample_rate(self):
+        raise NotImplementedError
+
+
+class DummyVoiceGenerator(VoiceGeneratorBase):
+    def __init__(self, *args, **kwargs):
+        pass
+
+    def generate(self, text, streaming=False):
+        zero_chunk = np.zeros(10000)
+        if streaming:
+            return itertools.repeat(zero_chunk)
+        else:
+            return zero_chunk
+
+    def generate_async(self, text, id=None):
+        pass
+
+    def maybe_set_voice_tone(self, voice_tone, role="character"):
+        pass
+
+    def start(self):
+        pass
+
+    def stop(self):
+        pass
+
+    @property
+    def sample_rate(self):
+        return 24000
+
+
 # OK voices for the multispeaker_original model:
 # Barbora MacLean, Damjan Chapman, Luis Moray
 
-class VoiceGenerator:
+class VoiceGenerator(VoiceGeneratorBase):
     _cached_tts_model_params = None
 
     def __init__(

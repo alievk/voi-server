@@ -283,6 +283,17 @@ class CharacterLLMAgent(BaseLLMAgent):
         return response
 
 
+class CharacterEchoAgent:
+    def __init__(self, *args, **kwargs):
+        pass
+
+    def completion(self, context, stream=False, temperature=0.5):
+        return context.messages[-1]["content"]
+
+    def greeting_message(self):
+        return {"role": "assistant", "content": "Hello, I'm an echo agent", "time": datetime.now()}
+
+
 class ControlBaseAgent:
     def __init__(self, temperature_multiplier=None, giveup_after=None, giveup_response=None):
         self.temperature_multiplier = 1.5 if temperature_multiplier is None else temperature_multiplier

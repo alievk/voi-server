@@ -16,9 +16,9 @@ from loguru import logger
 import litellm
 
 from recognition import OnlineASR
-from generation import VoiceGenerator
+from generation import VoiceGenerator, DummyVoiceGenerator
 from audio import AudioOutputStream, AudioInputStream, WavSaver
-from llm import get_agent_config, ConversationContext, BaseLLMAgent, CharacterLLMAgent, ControlPatternAgent, ControlLLMAgent
+from llm import get_agent_config, ConversationContext, BaseLLMAgent, CharacterLLMAgent, CharacterEchoAgent
 
 
 class Conversation:
@@ -26,19 +26,19 @@ class Conversation:
         self, 
         asr: OnlineASR, 
         voice_generator: VoiceGenerator,
-        response_agent: BaseLLMAgent,
+        character_agent: BaseLLMAgent,
         context_changed_cb: Callable=None
     ):
         self.asr = asr
         self.voice_generator = voice_generator
-        self.response_agent = response_agent
+        self.character_agent = character_agent
         self.context_changed_cb = context_changed_cb
         self.conversation_context = ConversationContext()
 
         self._event_loop = asyncio.get_event_loop()
 
     def greeting(self):
-        message = self.response_agent.greeting_message()
+        message = self.character_agent.greeting_message()
         _, message = self._update_conversation_context(message)
 
         if message.get("file"):
@@ -75,7 +75,7 @@ class Conversation:
         need_response = self.conversation_context.messages and self.conversation_context.messages[-1]["role"] == "user"
         if need_response:
             self.conversation_context.process_interrupted_messages()
-            response = self.response_agent.completion(self.conversation_context)
+            response = self.character_agent.completion(self.conversation_context)
 
             if isinstance(response, dict):
                 agent_text = response["text"]
@@ -214,12 +214,15 @@ async def handle_connection(websocket):
     )
 
     logger.info("Initializing voice generation")
-    voice_generator = VoiceGenerator(
-        cached=True,
-        model_name=agent_config["tts_model"],
-        generated_audio_cb=handle_generated_audio,
-        mute_narrator=agent_config.get("mute_narrator", False)
-    )
+    if agent_config["tts_model"] == "dummy":
+        voice_generator = DummyVoiceGenerator()
+    else:
+        voice_generator = VoiceGenerator(
+            cached=True,
+            model_name=agent_config["tts_model"],
+            generated_audio_cb=handle_generated_audio,
+            mute_narrator=agent_config.get("mute_narrator", False)
+        )
     voice_generator.maybe_set_voice_tone(agent_config.get("narrator_voice_tone"), role="narrator")
     voice_generator.start()
 
@@ -241,13 +244,16 @@ async def handle_connection(websocket):
     audio_output_stream.start()
 
     logger.info("Initializing response agent")
-    response_agent = CharacterLLMAgent.from_config(agent_config)
+    if agent_config["llm_model"] == "echo":
+        character_agent = CharacterEchoAgent()
+    else:
+        character_agent = CharacterLLMAgent.from_config(agent_config)
     
     logger.info("Initializing conversation")
     conversation = Conversation(
         asr=asr,
         voice_generator=voice_generator,
-        response_agent=response_agent,
+        character_agent=character_agent,
         context_changed_cb=handle_context_changed
     )
 
