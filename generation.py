@@ -143,6 +143,9 @@ class VoiceGenerator(VoiceGeneratorBase):
         with open(model_file, "r") as f:
             model_config = json.load(f)[model_name]
 
+        # TTS lib will silently fail if the tokenizer file does not exist
+        assert os.path.exists(model_config["tokenizer"]), f"Tokenizer file does not exist: {model_config['tokenizer']}"
+
         config = XttsConfig()
         config.load_json(model_config["config"])
         model = Xtts.init_from_config(config)
