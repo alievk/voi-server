@@ -1,6 +1,5 @@
 import os
 import asyncio
-import ssl
 import json
 import threading
 from collections import deque
@@ -189,7 +188,7 @@ async def handle_connection(websocket):
     async def handle_webm_audio(audio_chunk):
         # chunk is webm
         nonlocal last_assistant_speech_id
-        if audio_chunk is not None and websocket.open:
+        if audio_chunk is not None:
             metadata = {
                 "type": "audio",
                 # FIXME: we can't get audio id here because we're using ffmpeg to convert source audio to webm and lose audio id
@@ -319,10 +318,6 @@ async def handle_connection(websocket):
     logger.info("Connection is done")
 
 
-ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-ssl_context.load_cert_chain('localhost+2.pem', 'localhost+2-key.pem')
-
-
 def get_timestamp():
     return datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
 
@@ -349,7 +344,6 @@ async def main():
         handle_connection,
         "0.0.0.0",
         8765,
-        ssl=ssl_context
     )
     logger.info("WebSocket server started on wss://0.0.0.0:8765")
 
