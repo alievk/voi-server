@@ -139,6 +139,12 @@ class VoiceGenerator(VoiceGeneratorBase):
             VoiceGenerator._cached_tts_model_params["model_name"] == model_name):
             return VoiceGenerator._cached_tts_model_params
 
+        if VoiceGenerator._cached_tts_model_params:
+            VoiceGenerator._cached_tts_model_params["model"].cpu()
+            del VoiceGenerator._cached_tts_model_params["model"]
+            del VoiceGenerator._cached_tts_model_params["voices"]
+            torch.cuda.empty_cache()
+
         model_file = os.path.join(os.path.dirname(__file__), "tts_models.json")
         with open(model_file, "r") as f:
             model_config = json.load(f)[model_name]
