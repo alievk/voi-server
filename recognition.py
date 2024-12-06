@@ -2,6 +2,7 @@ import numpy as np
 import librosa
 from loguru import logger
 
+import torch
 import whisperx
 
 
@@ -140,8 +141,16 @@ class OfflineASR:
 
     @staticmethod
     def get_model(language="en", device="cuda", cached=True):
-        if cached and OfflineASR._cached_model_params:
+        if (cached and OfflineASR._cached_model_params and 
+            OfflineASR._cached_model_params["language"] == language):
             return OfflineASR._cached_model_params
+        
+        if OfflineASR._cached_model_params:
+            OfflineASR._cached_model_params["model"].model.model.unload_model(to_cpu=True)
+            OfflineASR._cached_model_params["model_a"].cpu()
+            del OfflineASR._cached_model_params["model"]
+            del OfflineASR._cached_model_params["model_a"]
+            torch.cuda.empty_cache()
 
         whisper_model = whisperx.load_model(
             "large-v2",
@@ -158,19 +167,41 @@ class OfflineASR:
             model_name="WAV2VEC2_ASR_LARGE_LV60K_960H"
         )
 
-        OfflineASR._cached_model_params = whisper_model, align_model, align_metadata
+        OfflineASR._cached_model_params = {
+            "model": whisper_model,
+            "model_a": align_model,
+            "align_metadata": align_metadata,
+            "language": language
+        }
         return OfflineASR._cached_model_params
     
-    def __init__(self, language="en", device="cuda", cached=False):
+    def __init__(self, language="en", cached=False):
         self.language = language
-        self.device = device
         self.batch_size = 1 # reduce if low on GPU mem
+        self.device = "cuda"
 
-        self.model, self.model_a, self.align_metadata = OfflineASR.get_model(language=language, device=device, cached=cached)
-        
+        model_params = OfflineASR.get_model(language=language, cached=cached)
+        self.model = model_params["model"]
+        self.model_a = model_params["model_a"]
+        self.align_metadata = model_params["align_metadata"]
+
     def transcribe(self, audio, previous_text=None):
-        result = self.model.transcribe(audio, batch_size=self.batch_size, language=self.language, previous_text=previous_text)
-        result = whisperx.align(result["segments"], self.model_a, self.align_metadata, audio, self.device, return_char_alignments=False)
+        transcript = self.model.transcribe(
+            audio, 
+            batch_size=self.batch_size, 
+            language=self.language, 
+            previous_text=previous_text
+        )
+
+        result = whisperx.align(
+            transcript=transcript["segments"], 
+            model=self.model_a, 
+            align_model_metadata=self.align_metadata, 
+            audio=audio, 
+            device=self.device, 
+            return_char_alignments=False
+        )
+
         return self._to_words(result)
 
     def _to_words(self, result):
