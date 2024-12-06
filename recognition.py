@@ -136,36 +136,38 @@ class HypothesisBuffer:
 
 class OfflineASR:
     word_sep = " "
-    _cached_ars_model = None
+    _cached_model_params = None
 
     @staticmethod
-    def get_model(cached=True, language=None):
-        if cached and OfflineASR._cached_ars_model:
-            return OfflineASR._cached_ars_model
+    def get_model(language="en", device="cuda", cached=True):
+        if cached and OfflineASR._cached_model_params:
+            return OfflineASR._cached_model_params
 
-        OfflineASR._cached_ars_model = whisperx.load_model(
+        whisper_model = whisperx.load_model(
             "large-v2",
-            device="cuda", 
+            device=device, 
             compute_type="float16", 
             language=language,
             # vad_options={'vad_onset': 0.8, 'vad_offset': 0.8}
             # asr_options={"initial_prompt": "He thoughtfully said: "}
-            )
-        return OfflineASR._cached_ars_model
-    
-    def __init__(self, language, cached=False):
-        self.device = "cuda"
-        self.batch_size = 1 # reduce if low on GPU mem
-        self.language = language
+        )
 
-        self.model = OfflineASR.get_model(cached=cached, language=language)
-        
-        self.model_a, self.align_metadata = whisperx.load_align_model(
-            language_code=self.language, 
-            device=self.device, 
+        align_model, align_metadata = whisperx.load_align_model(
+            language_code=language, 
+            device=device, 
             model_name="WAV2VEC2_ASR_LARGE_LV60K_960H"
         )
 
+        OfflineASR._cached_model_params = whisper_model, align_model, align_metadata
+        return OfflineASR._cached_model_params
+    
+    def __init__(self, language="en", device="cuda", cached=False):
+        self.language = language
+        self.device = device
+        self.batch_size = 1 # reduce if low on GPU mem
+
+        self.model, self.model_a, self.align_metadata = OfflineASR.get_model(language=language, device=device, cached=cached)
+        
     def transcribe(self, audio, previous_text=None):
         result = self.model.transcribe(audio, batch_size=self.batch_size, language=self.language, previous_text=previous_text)
         result = whisperx.align(result["segments"], self.model_a, self.align_metadata, audio, self.device, return_char_alignments=False)
