@@ -54,6 +54,7 @@ class ConversationContext:
         self.lock = threading.Lock()
 
     def add_message(self, message, text_compare_f=None):
+        assert isinstance(message, dict), f"Message must be a dictionary, got {message.__class__}"
         with self.lock:
             assert message["role"].lower() in ["assistant", "user"], f"Unknown role {message['role']}"
 
