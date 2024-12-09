@@ -161,6 +161,7 @@ class BaseLLMAgent:
     def output_json(self):
         return self._output_json
 
+    @logger.catch
     def completion(self, context, stream=False, temperature=0.5):
         assert isinstance(context, ConversationContext), f"Invalid context type {context.__class__}"
         assert not (stream and self.output_json), "Streamed JSON responses are not supported"
