@@ -163,7 +163,7 @@ class BaseLLMAgent:
 
     @logger.catch
     def completion(self, context, stream=False, temperature=0.5):
-        assert isinstance(context, ConversationContext), f"Invalid context type {context.__class__}"
+        assert hasattr(context, 'get_messages'), "Context must have get_messages method"
         assert not (stream and self.output_json), "Streamed JSON responses are not supported"
         
         messages = [
