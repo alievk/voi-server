@@ -141,7 +141,7 @@ def get_agent_config(agent_name):
 
 
 class BaseLLMAgent:
-    def __init__(self, model_name, system_prompt, examples=None):
+    def __init__(self, model_name, system_prompt, user_prompt=None, examples=None):
         if isinstance(system_prompt, list):
             system_prompt = "\n".join(system_prompt)
 
@@ -154,6 +154,7 @@ class BaseLLMAgent:
 
         self.model_name = model_name
         self.system_prompt = system_prompt
+        self.user_prompt = user_prompt
         self.examples = examples
         self._output_json = "json" in system_prompt.lower()
 
@@ -179,6 +180,9 @@ class BaseLLMAgent:
                 messages.append({"role": "assistant", "content": example["assistant"]})
 
         messages += context.get_messages(include_fields=["role", "content"])
+
+        if self.user_prompt and messages[-1]["role"] == "user":
+            messages[-1]["content"] = self.user_prompt.format(user_message=messages[-1]["content"])
 
         logger.debug("Messages:\n{}", self._messages_to_text(messages))
         
@@ -217,10 +221,11 @@ class BaseLLMAgent:
 
 
 class CharacterLLMAgent(BaseLLMAgent):
-    def __init__(self, system_prompt, model_name="gpt-4o-mini", examples=None, greetings=None, control_agent=None):
+    def __init__(self, system_prompt, model_name="gpt-4o-mini", user_prompt=None, examples=None, greetings=None, control_agent=None):
         super().__init__(
             model_name=model_name,
             system_prompt=system_prompt, 
+            user_prompt=user_prompt,
             examples=examples
         )
         self.greetings = greetings
@@ -240,6 +245,7 @@ class CharacterLLMAgent(BaseLLMAgent):
             model_name=config["llm_model"],
             examples=config["examples"],
             greetings=config["greetings"],
+            user_prompt=config.get("user_prompt"),
             control_agent=control_agent
         )
 
