@@ -26,20 +26,18 @@ class Conversation:
         asr: OnlineASR, 
         voice_generator: VoiceGenerator,
         character_agent: BaseLLMAgent,
-        context_changed_cb: Callable=None,
         conversation_context: ConversationContext=None
     ):
         self.asr = asr
         self.voice_generator = voice_generator
         self.character_agent = character_agent
-        self.context_changed_cb = context_changed_cb
         self.conversation_context = conversation_context
 
         self._event_loop = asyncio.get_event_loop()
 
     def greeting(self):
         message = self.character_agent.greeting_message()
-        _, message = self._update_conversation_context(message)
+        _, message = self.conversation_context.add_message(message)
 
         if message.get("file"):
             self.voice_generator.generate_async(text=f"file:{message['file']}", id=message["id"])
@@ -55,7 +53,7 @@ class Conversation:
 
         if asr_result and (asr_result["confirmed_text"] or asr_result["unconfirmed_text"]):
             message = self._create_message_from_transcription(asr_result)
-            context_changed, changed_message = self._update_conversation_context(message)
+            context_changed, changed_message = self.conversation_context.add_message(message)
             # if context_changed:
             #     self._transcription_changed.set()
 
@@ -68,7 +66,7 @@ class Conversation:
             "content": text,
             "time": datetime.now()
         }
-        self._update_conversation_context(message)
+        self.conversation_context.add_message(message)
         self._maybe_respond()
 
     def _maybe_respond(self):
@@ -89,7 +87,7 @@ class Conversation:
                 "voice_tone": agent_tone,
                 "time": datetime.now()
             }
-            _, new_message = self._update_conversation_context(agent_message)
+            _, new_message = self.conversation_context.add_message(agent_message)
 
             if agent_tone:
                 self.voice_generator.maybe_set_voice_tone(agent_tone)
@@ -106,12 +104,6 @@ class Conversation:
             "content": text,
             "time": datetime.now()
         }
-
-    def _update_conversation_context(self, message):
-        context_changed, changed_message = self.conversation_context.add_message(message)
-        if context_changed:
-            asyncio.run_coroutine_threadsafe(self.context_changed_cb(self.conversation_context), self._event_loop)
-        return context_changed, changed_message
 
     def on_assistant_audio_end(self, speech_id, duration):
         messages = self.conversation_context.get_messages(filter=lambda msg: msg["role"] == "assistant" and msg["id"] == speech_id)
@@ -255,7 +247,8 @@ async def handle_connection(websocket):
         character_agent = CharacterLLMAgent.from_config(agent_config)
 
     conversation_context = ConversationContext(
-        text_compare_f=lambda x, y: x.strip().lower() == y.strip().lower()
+        text_compare_f=lambda x, y: x.strip().lower() == y.strip().lower(),
+        context_changed_cb=handle_context_changed
     )
     
     logger.info("Initializing conversation")
@@ -263,7 +256,6 @@ async def handle_connection(websocket):
         asr=asr,
         voice_generator=voice_generator,
         character_agent=character_agent,
-        context_changed_cb=handle_context_changed,
         conversation_context=conversation_context
     )
 

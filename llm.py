@@ -4,6 +4,7 @@ import json
 from datetime import datetime
 import litellm
 import random
+import asyncio
 from loguru import logger
 
 from text import SentenceStream
@@ -49,12 +50,20 @@ character_agent_message_format_narrator_comments = (
 
 
 class ConversationContext:
-    def __init__(self, text_compare_f=None):
+    def __init__(self, text_compare_f=None, context_changed_cb=None):
         self.messages = []
         self.lock = threading.Lock()
         self.text_compare_f = lambda x, y: x == y if text_compare_f is None else text_compare_f
+        self.context_changed_cb = context_changed_cb
+        self._event_loop = asyncio.get_event_loop()
 
     def add_message(self, message):
+        changed, message = self._add_message(message)
+        if changed and self.context_changed_cb:
+            asyncio.run_coroutine_threadsafe(self.context_changed_cb(self), self._event_loop)
+        return changed, message
+
+    def _add_message(self, message):
         assert isinstance(message, dict), f"Message must be a dictionary, got {message.__class__}"
         with self.lock:
             assert message["role"].lower() in ["assistant", "user"], f"Unknown role {message['role']}"
