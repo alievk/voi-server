@@ -186,10 +186,19 @@ class BaseLLMAgent:
                 messages.append({"role": "user", "content": example["user"]})
                 messages.append({"role": "assistant", "content": example["assistant"]})
 
-        messages += context.get_messages(include_fields=["role", "content"])
+        # prepare messages for LLM
+        for msg in context.get_messages(include_fields=["role", "content"]):
+            if isinstance(msg["content"], dict):
+                # I thought it would be better to show LLM entire JSON in the context 
+                # so that it will follow the JSON format in the next response
+                # msg["content"] = json.dumps(msg["content"])
+                # but it didn't work as expected
+                msg["content"] = msg["content"]["text"]
 
-        if self.user_prompt and messages[-1]["role"] == "user":
-            messages[-1]["content"] = self.user_prompt.format(user_message=messages[-1]["content"])
+            if msg["role"] == "user" and self.user_prompt:
+                msg["content"] = self.user_prompt.format(user_message=msg["content"])
+
+            messages.append(msg)
 
         logger.debug("Messages:\n{}", self._messages_to_text(messages))
         
@@ -263,7 +272,10 @@ class CharacterLLMAgent(BaseLLMAgent):
     def greeting_message(self):
         greeting = random.choice(self.greetings["choices"])
         if isinstance(greeting, dict):
-            content = greeting["content"]
+            content = {
+                "text": greeting["content"],
+                "voice_tone": self.greetings.get("voice_tone")
+            }
             file = greeting["file"]
         else:
             content = greeting
@@ -273,7 +285,6 @@ class CharacterLLMAgent(BaseLLMAgent):
             "role": "assistant",
             "content": content,
             "file": file,
-            "voice_tone": self.greetings.get("voice_tone"),
             "time": datetime.now()
         }
 

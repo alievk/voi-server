@@ -38,12 +38,7 @@ class Conversation:
     def greeting(self):
         message = self.character_agent.greeting_message()
         _, message = self.conversation_context.add_message(message)
-
-        if message.get("file"):
-            self.voice_generator.generate_async(text=f"file:{message['file']}", id=message["id"])
-        else:
-            self.voice_generator.maybe_set_voice_tone(message.get("voice_tone"))
-            self.voice_generator.generate_async(text=message["content"], id=message["id"])
+        self._generate_voice(message)
 
     @logger.catch
     async def handle_input_audio(self, audio_chunk):
@@ -75,23 +70,25 @@ class Conversation:
             self.conversation_context.process_interrupted_messages()
             response = self.character_agent.completion(self.conversation_context)
 
-            if isinstance(response, dict):
-                agent_text = response["text"]
-                agent_tone = response["voice_tone"]
-            else:
-                agent_text = response
-                agent_tone = None
-            agent_message = {
+            message = {
                 "role": "assistant",
-                "content": agent_text,
-                "voice_tone": agent_tone,
+                "content": response,
                 "time": datetime.now()
             }
-            _, new_message = self.conversation_context.add_message(agent_message)
+            _, new_message = self.conversation_context.add_message(message)
 
-            if agent_tone:
-                self.voice_generator.maybe_set_voice_tone(agent_tone)
-            self.voice_generator.generate_async(text=agent_text, id=new_message["id"])
+            self._generate_voice(new_message)
+
+    def _generate_voice(self, message):
+        if message.get("file"): # play cached audio
+            content = f"file:{message['file']}"
+        elif isinstance(message["content"], dict):
+            self.voice_generator.maybe_set_voice_tone(message["content"].get("voice_tone"))
+            content = message["content"]["text"]
+        else:
+            content = message["content"]
+
+        self.voice_generator.generate_async(text=content, id=message["id"])
 
     def _create_message_from_transcription(self, transcription):
         confirmed = transcription["confirmed_text"]
@@ -137,8 +134,8 @@ async def handle_connection(websocket):
         if audio_chunk is not None:
             audio_input_saver.write(audio_chunk)
 
-    def get_emoji(voice_tone):
-        return {
+    def stringify_content(content):
+        emoji_map = lambda voice_tone: {
             "neutral": "😐",
             "warm": "😊",
             "erotic": "😍",
@@ -146,17 +143,19 @@ async def handle_connection(websocket):
             "sad": "😔"
         }.get(voice_tone, "😐")
 
+        if isinstance(content, dict):
+            return f"{emoji_map(content.get('voice_tone'))} {content['text']}"
+        else:
+            return content
+
     @logger.catch
     async def handle_context_changed(context):
         messages = context.get_messages(filter=lambda msg: not msg["handled"])
         for msg in messages:
-            content = msg["content"]
-            if "voice_tone" in msg:
-                content = get_emoji(msg['voice_tone']) + " " + content
             data = {
                 "type": "message",
                 "role": msg["role"],
-                "content": content,
+                "content": stringify_content(msg["content"]),
                 "time": msg["time"].strftime("%H:%M:%S"),
                 "id": msg["id"]
             }
