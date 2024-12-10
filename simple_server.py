@@ -169,8 +169,11 @@ async def handle_connection(websocket):
                 "id": msg["id"]
             }
             logger.info("Sending message: {}", data)
-            await websocket.send(serialize_message(data))
-            context.update_message(msg["id"], handled=True)
+            try:
+                await websocket.send(serialize_message(data))
+                context.update_message(msg["id"], handled=True)
+            except Exception as e:
+                logger.error(f"Error sending message: {e}")
 
     @logger.catch
     async def handle_generated_audio(audio_chunk, speech_id, duration=None):
@@ -194,7 +197,10 @@ async def handle_connection(websocket):
                 # FIXME: we can't get audio id here because we're using ffmpeg to convert source audio to webm and lose audio id
                 "speech_id": last_assistant_speech_id
             }
-            await websocket.send(serialize_message(metadata, audio_chunk))
+            try:
+                await websocket.send(serialize_message(metadata, audio_chunk))
+            except Exception as e:
+                logger.error(f"Error sending audio chunk: {e}")
 
     @logger.catch
     async def read_init_message(websocket):
