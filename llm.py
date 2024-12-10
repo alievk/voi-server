@@ -206,7 +206,11 @@ class BaseLLMAgent:
             logger.debug("Response content: {}", content)
 
             if self.output_json:
-                content = json.loads(content)
+                try:    
+                    content = json.loads(content)
+                except json.JSONDecodeError:
+                    logger.error("Failed to parse JSON response: {}", content)
+                    content = "*failed to parse JSON response, see server logs for details*"
 
             return content
 
