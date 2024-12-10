@@ -148,7 +148,14 @@ def get_agent_config(agent_name):
 
 
 class BaseLLMAgent:
-    def __init__(self, model_name, system_prompt, user_prompt=None, examples=None):
+    def __init__(self, 
+        model_name, 
+        system_prompt, 
+        user_prompt=None, 
+        examples=None, 
+        giveup_after=3, 
+        giveup_response=None
+    ):
         if isinstance(system_prompt, list):
             system_prompt = "\n".join(system_prompt)
 
@@ -164,6 +171,8 @@ class BaseLLMAgent:
         self.user_prompt = user_prompt
         self.examples = examples
         self._output_json = "json" in system_prompt.lower()
+        self.giveup_after = giveup_after
+        self.giveup_response = "*failed to generate a valid response, see server logs for details*" if giveup_response is None else giveup_response
 
     @property
     def output_json(self):
@@ -191,9 +200,9 @@ class BaseLLMAgent:
             if isinstance(msg["content"], dict):
                 # I thought it would be better to show LLM entire JSON in the context 
                 # so that it will follow the JSON format in the next response
-                # msg["content"] = json.dumps(msg["content"])
+                msg["content"] = "JSON: " + json.dumps(msg["content"])
                 # but it didn't work as expected
-                msg["content"] = msg["content"]["text"]
+                # msg["content"] = msg["content"]["text"]
 
             if msg["role"] == "user" and self.user_prompt:
                 msg["content"] = self.user_prompt.format(user_message=msg["content"])
@@ -202,28 +211,38 @@ class BaseLLMAgent:
 
         logger.debug("Messages:\n{}", self._messages_to_text(messages))
         
-        response = litellm.completion(
-            model=self.model_name, 
-            messages=messages, 
-            response_format={"type": "json_object"} if self.output_json else None,
-            temperature=temperature,
-            stream=stream
-        )
+        for i_try in range(self.giveup_after):
+            logger.debug(f"Base agent try {i_try+1}/{self.giveup_after}")
 
-        if not stream:
+            response = litellm.completion(
+                model=self.model_name, 
+                messages=messages, 
+                response_format={"type": "json_object"} if self.output_json else None,
+                temperature=temperature,
+                stream=stream
+            )
+
+            if stream:
+                return SentenceStream(response, preprocessor=lambda x: x.choices[0].delta.content)
+
             content = response.choices[0].message.content
             logger.debug("Response content: {}", content)
 
             if self.output_json:
-                try:    
+                try:
+                    if content.startswith("JSON:"):
+                        content = content.removeprefix("JSON:").strip()
                     content = json.loads(content)
                 except json.JSONDecodeError:
                     logger.error("Failed to parse JSON response: {}", content)
-                    content = "*failed to parse JSON response, see server logs for details*"
+                    continue
 
             return content
 
-        return SentenceStream(response, preprocessor=lambda x: x.choices[0].delta.content)
+        if stream:
+            return SentenceStream(self.giveup_response)
+
+        return self.giveup_response
 
     @staticmethod
     def format_transcription(confirmed, unconfirmed):
