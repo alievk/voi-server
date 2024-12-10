@@ -26,13 +26,14 @@ class Conversation:
         asr: OnlineASR, 
         voice_generator: VoiceGenerator,
         character_agent: BaseLLMAgent,
-        context_changed_cb: Callable=None
+        context_changed_cb: Callable=None,
+        conversation_context: ConversationContext=None
     ):
         self.asr = asr
         self.voice_generator = voice_generator
         self.character_agent = character_agent
         self.context_changed_cb = context_changed_cb
-        self.conversation_context = ConversationContext()
+        self.conversation_context = conversation_context
 
         self._event_loop = asyncio.get_event_loop()
 
@@ -107,8 +108,7 @@ class Conversation:
         }
 
     def _update_conversation_context(self, message):
-        compare_ignore_case = lambda x, y: x.strip().lower() == y.strip().lower()
-        context_changed, changed_message = self.conversation_context.add_message(message, text_compare_f=compare_ignore_case)
+        context_changed, changed_message = self.conversation_context.add_message(message)
         if context_changed:
             asyncio.run_coroutine_threadsafe(self.context_changed_cb(self.conversation_context), self._event_loop)
         return context_changed, changed_message
@@ -253,13 +253,18 @@ async def handle_connection(websocket):
         character_agent = CharacterEchoAgent()
     else:
         character_agent = CharacterLLMAgent.from_config(agent_config)
+
+    conversation_context = ConversationContext(
+        text_compare_f=lambda x, y: x.strip().lower() == y.strip().lower()
+    )
     
     logger.info("Initializing conversation")
     conversation = Conversation(
         asr=asr,
         voice_generator=voice_generator,
         character_agent=character_agent,
-        context_changed_cb=handle_context_changed
+        context_changed_cb=handle_context_changed,
+        conversation_context=conversation_context
     )
 
     logger.info("Initializing audio input saver")

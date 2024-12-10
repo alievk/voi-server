@@ -49,11 +49,12 @@ character_agent_message_format_narrator_comments = (
 
 
 class ConversationContext:
-    def __init__(self):
+    def __init__(self, text_compare_f=None):
         self.messages = []
         self.lock = threading.Lock()
+        self.text_compare_f = lambda x, y: x == y if text_compare_f is None else text_compare_f
 
-    def add_message(self, message, text_compare_f=None):
+    def add_message(self, message):
         assert isinstance(message, dict), f"Message must be a dictionary, got {message.__class__}"
         with self.lock:
             assert message["role"].lower() in ["assistant", "user"], f"Unknown role {message['role']}"
@@ -64,10 +65,7 @@ class ConversationContext:
                 self.messages.append(message)
                 return True, message
 
-            if text_compare_f is None:
-                text_compare_f = lambda x, y: x == y
-
-            if not text_compare_f(self.messages[-1]["content"], message["content"]):
+            if not self.text_compare_f(self.messages[-1]["content"], message["content"]):
                 self.messages[-1]["content"] = message["content"]
                 self.messages[-1]["handled"] = False
                 return True, self.messages[-1]
