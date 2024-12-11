@@ -17,7 +17,7 @@ import litellm
 from recognition import OnlineASR
 from generation import VoiceGenerator, DummyVoiceGenerator
 from audio import AudioOutputStream, AudioInputStream, WavSaver
-from llm import get_agent_config, ConversationContext, BaseLLMAgent, CharacterLLMAgent, CharacterEchoAgent
+from llm import get_agent_config, stringify_content, ConversationContext, BaseLLMAgent, CharacterLLMAgent, CharacterEchoAgent
 
 
 class Conversation:
@@ -133,20 +133,6 @@ async def handle_connection(websocket):
         await conversation.handle_input_audio(audio_chunk)
         if audio_chunk is not None:
             audio_input_saver.write(audio_chunk)
-
-    def stringify_content(content):
-        emoji_map = lambda voice_tone: {
-            "neutral": "😐",
-            "warm": "😊",
-            "erotic": "😍",
-            "excited": "😃",
-            "sad": "😔"
-        }.get(voice_tone, "😐")
-
-        if isinstance(content, dict):
-            return f"{emoji_map(content.get('voice_tone'))} {content['text']}"
-        else:
-            return content
 
     @logger.catch
     async def handle_context_changed(context):

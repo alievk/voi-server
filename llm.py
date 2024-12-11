@@ -49,6 +49,27 @@ character_agent_message_format_narrator_comments = (
 )
 
 
+def stringify_content(content):
+    emoji_map = lambda voice_tone: {
+        "neutral": "😐",
+        "warm": "😊",
+        "erotic": "😍",
+        "excited": "😃",
+        "sad": "😔"
+    }.get(voice_tone, "😐")
+
+    if isinstance(content, dict):
+        return f"{emoji_map(content.get('voice_tone'))} {content['text']}"
+    else:
+        return content
+
+
+def model_supports_json_output(model_name):
+    if "lepton" in model_name: # models provided by Lepton do not support JSON output
+        return False
+    return True
+
+
 class ConversationContext:
     def __init__(self, text_compare_f=None, context_changed_cb=None):
         self.messages = []
@@ -81,7 +102,7 @@ class ConversationContext:
 
             return False, None
 
-    def get_messages(self, include_fields=None, filter=None):
+    def get_messages(self, include_fields=None, filter=None, processor=None):
         with self.lock:
             if include_fields is None:
                 messages = self.messages
@@ -90,6 +111,9 @@ class ConversationContext:
 
             if filter:
                 messages = [msg for msg in messages if filter(msg)]
+
+            if processor:
+                messages = [processor(msg) for msg in messages]
 
             return messages
 
@@ -151,7 +175,6 @@ class BaseLLMAgent:
     def __init__(self, 
         model_name, 
         system_prompt, 
-        user_prompt=None, 
         examples=None, 
         giveup_after=3, 
         giveup_response=None
@@ -168,7 +191,6 @@ class BaseLLMAgent:
 
         self.model_name = model_name
         self.system_prompt = system_prompt
-        self.user_prompt = user_prompt
         self.examples = examples
         self._output_json = "json" in system_prompt.lower()
         self.giveup_after = giveup_after
@@ -195,19 +217,23 @@ class BaseLLMAgent:
                 messages.append({"role": "user", "content": example["user"]})
                 messages.append({"role": "assistant", "content": example["assistant"]})
 
-        # prepare messages for LLM
-        for msg in context.get_messages(include_fields=["role", "content"]):
-            if isinstance(msg["content"], dict):
-                # I thought it would be better to show LLM entire JSON in the context 
-                # so that it will follow the JSON format in the next response
-                msg["content"] = "JSON: " + json.dumps(msg["content"])
-                # but it didn't work as expected
-                # msg["content"] = msg["content"]["text"]
+        force_json = self.output_json and not model_supports_json_output(self.model_name)
 
-            if msg["role"] == "user" and self.user_prompt:
-                msg["content"] = self.user_prompt.format(user_message=msg["content"])
+        def message_processor(msg):
+            msg["content"] = stringify_content(msg["content"])
 
-            messages.append(msg)
+            if msg["role"] == "user" and force_json:
+                msg["content"] += "\nRespond with a valid JSON object."
+
+            return msg
+
+        messages += context.get_messages(
+            include_fields=["role", "content"], 
+            processor=message_processor
+        )
+
+        if force_json and messages[-1]["role"] == "user":
+            messages.append({"role": "assistant", "content": "{"}) # prefill technique https://docs.anthropic.com/en/docs/build-with-claude/prompt-engineering/prefill-claudes-response#example-maintaining-character-without-role-prompting
 
         logger.debug("Messages:\n{}", self._messages_to_text(messages))
         
@@ -260,11 +286,10 @@ class BaseLLMAgent:
 
 
 class CharacterLLMAgent(BaseLLMAgent):
-    def __init__(self, system_prompt, model_name="gpt-4o-mini", user_prompt=None, examples=None, greetings=None, control_agent=None):
+    def __init__(self, system_prompt, model_name="gpt-4o-mini", examples=None, greetings=None, control_agent=None):
         super().__init__(
             model_name=model_name,
             system_prompt=system_prompt, 
-            user_prompt=user_prompt,
             examples=examples
         )
         self.greetings = greetings
@@ -284,7 +309,6 @@ class CharacterLLMAgent(BaseLLMAgent):
             model_name=config["llm_model"],
             examples=config["examples"],
             greetings=config["greetings"],
-            user_prompt=config.get("user_prompt"),
             control_agent=control_agent
         )
 
