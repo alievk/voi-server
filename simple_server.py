@@ -37,7 +37,7 @@ class Conversation:
 
     def greeting(self):
         message = self.character_agent.greeting_message()
-        _, message = self.conversation_context.add_message(message)
+        message = self.conversation_context.add_message(message)
         self._generate_voice(message)
 
     @logger.catch
@@ -48,9 +48,11 @@ class Conversation:
 
         if asr_result and (asr_result["confirmed_text"] or asr_result["unconfirmed_text"]):
             message = self._create_message_from_transcription(asr_result)
-            context_changed, changed_message = self.conversation_context.add_message(message)
-            # if context_changed:
-            #     self._transcription_changed.set()
+            messages = self.conversation_context.get_messages()
+            if messages and messages[-1]["role"] == "user":
+                self.conversation_context.update_message(messages[-1]["id"], content=message["content"], handled=False)
+            else:
+                self.conversation_context.add_message(message)
 
         if end_of_audio:
             self._maybe_respond()
@@ -75,7 +77,7 @@ class Conversation:
                 "content": response,
                 "time": datetime.now()
             }
-            _, new_message = self.conversation_context.add_message(message)
+            new_message = self.conversation_context.add_message(message)
 
             self._generate_voice(new_message)
 
@@ -232,7 +234,6 @@ async def handle_connection(websocket):
         character_agent = CharacterLLMAgent.from_config(agent_config)
 
     conversation_context = ConversationContext(
-        text_compare_f=lambda x, y: x.strip().lower() == y.strip().lower(),
         context_changed_cb=handle_context_changed
     )
     

@@ -73,36 +73,29 @@ def model_supports_json_output(model_name):
 
 
 class ConversationContext:
-    def __init__(self, text_compare_f=None, context_changed_cb=None):
+    def __init__(self, context_changed_cb=None):
         self.messages = []
         self.lock = threading.Lock()
-        self.text_compare_f = lambda x, y: x == y if text_compare_f is None else text_compare_f
         self.context_changed_cb = context_changed_cb
         self._event_loop = asyncio.get_event_loop()
 
-    def add_message(self, message):
-        changed, message = self._add_message(message)
-        if changed and self.context_changed_cb:
+    def _handle_context_changed(self):
+        if self.context_changed_cb:
             asyncio.run_coroutine_threadsafe(self.context_changed_cb(self), self._event_loop)
-        return changed, message
+
+    def add_message(self, message):
+        new_message = self._add_message(message)
+        self._handle_context_changed()
+        return new_message
 
     def _add_message(self, message):
         assert isinstance(message, dict), f"Message must be a dictionary, got {message.__class__}"
+        assert message["role"].lower() in ["assistant", "user"], f"Unknown role {message['role']}"
         with self.lock:
-            assert message["role"].lower() in ["assistant", "user"], f"Unknown role {message['role']}"
-
-            if not self.messages or self.messages[-1]["role"].lower() != message["role"].lower():
-                message["id"] = len(self.messages)
-                message["handled"] = False
-                self.messages.append(message)
-                return True, message
-
-            if not self.text_compare_f(self.messages[-1]["content"], message["content"]):
-                self.messages[-1]["content"] = message["content"]
-                self.messages[-1]["handled"] = False
-                return True, self.messages[-1]
-
-            return False, None
+            message["id"] = len(self.messages)
+            message["handled"] = False
+            self.messages.append(message)
+            return message
 
     def get_messages(self, include_fields=None, filter=None, processor=None):
         with self.lock:
@@ -124,6 +117,8 @@ class ConversationContext:
             for msg in self.messages:
                 if msg["id"] == id:
                     msg.update(kwargs)
+                    if "content" in kwargs:
+                        self._handle_context_changed()
                     return True
             return False
 
@@ -154,8 +149,12 @@ class ConversationContext:
                     # Cut the message content to the point where it was interrupted
                     percent = msg["interrupted_at"] / msg["audio_duration"]
                     if percent < 1: # if percent > 1, the message was not interrupted
-                        cut_content = msg["content"][:int(len(msg["content"]) * percent)]
-                        msg["content"] = f"{cut_content}... (interrupted)"
+                        orig_content = msg["content"]["text"] if isinstance(msg["content"], dict) else msg["content"]
+                        cut_content = orig_content[:int(len(orig_content) * percent)] + "..."
+                        if isinstance(msg["content"], dict):
+                            msg["content"]["text"] = cut_content
+                        else:
+                            msg["content"] = cut_content
                         del msg["interrupted_at"], msg["audio_duration"] # don't process this message again
                         msg["handled"] = False
 
@@ -218,7 +217,9 @@ class BaseLLMAgent:
         force_json = self.output_json and not model_supports_json_output(self.model_name)
 
         def message_processor(msg):
-            msg["content"] = stringify_content(msg["content"])
+            # msg["content"] = stringify_content(msg["content"])
+            if isinstance(msg["content"], dict):
+                msg["content"] = json.dumps(msg["content"])
 
             if msg["role"] == "user" and force_json:
                 msg["content"] += "\nRespond with a valid JSON object."
