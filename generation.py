@@ -96,14 +96,15 @@ class VoiceGenerator(VoiceGeneratorBase):
         self.tts_model = self.tts_model_params["model"]
         self.tts_voices = self.tts_model_params["voices"]
 
-        default_voice = list(self.tts_voices.keys())[0]
-        self.voice = default_voice if voice is None else voice
-        self.narrator_voice = default_voice if narrator_voice is None else narrator_voice
         self.mute_narrator = mute_narrator
 
         self.running = False
         self.text_queue = None
         self._event_loop = asyncio.get_event_loop()
+
+        default_voice = list(self.tts_voices.keys())[0]
+        self.set_voice(default_voice if voice is None else voice, role="character")
+        self.set_voice(default_voice if narrator_voice is None else narrator_voice, role="narrator")
 
     def start(self):
         self.running = True
@@ -117,7 +118,7 @@ class VoiceGenerator(VoiceGeneratorBase):
 
     def set_voice(self, voice, role="character"):
         if voice not in self.tts_voices:
-            raise ValueError(f"Voice {voice} not found")
+            raise ValueError(f"Voice {voice} not found. Available voices: {self.tts_voices.keys()}")
 
         assert role in ["character", "narrator"]
         if role == "character":
