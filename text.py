@@ -3,26 +3,35 @@ import nltk
 import re
 
 
-def split_text_into_chunks(text, max_chunk_len=60):
+def split_text_into_chunks(text, avg_text_len=60):
     chunks = []
     buffer = ""
+    current_len = 0
     
     for sent in SentenceStream(text):
+        sent_len = len(sent)
+        
         if not buffer:
             buffer = sent
+            current_len = sent_len
             continue
-        if len(buffer) + len(sent) <= max_chunk_len:
+            
+        new_len = current_len + len(sent) + 1  # +1 for space
+        
+        if abs(new_len - avg_text_len) < abs(current_len - avg_text_len):
             buffer += ' ' + sent
+            current_len = new_len
         else:
             chunks.append(buffer)
             buffer = sent
+            current_len = sent_len
             
     if buffer:
         chunks.append(buffer)
     return chunks
 
 
-def split_text_into_speech_segments(text, max_chunk_len=60):
+def split_text_into_speech_segments(text, avg_text_len=60):
     """
     Return list of speech segments with text and role.
     Role is either "narrator" or "character".
@@ -33,7 +42,7 @@ def split_text_into_speech_segments(text, max_chunk_len=60):
             return []
         
         parts = []
-        for segment in split_text_into_chunks(chunk.strip(), max_chunk_len):
+        for segment in split_text_into_chunks(chunk.strip(), avg_text_len):
             if not any(c.isalpha() for c in segment):
                 continue
                 
@@ -46,7 +55,7 @@ def split_text_into_speech_segments(text, max_chunk_len=60):
     parts = []
     last_end = 0
     
-    for match in re.finditer(r"\*([^*]+)\*", text):
+    for match in re.finditer(r"\*([^*]+)\*[.,!?]?", text):
         # Process character text before narrator text
         parts.extend(process_chunk(text[last_end:match.start()], "character"))
         # Process narrator text

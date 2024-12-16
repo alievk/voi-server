@@ -171,7 +171,7 @@ class VoiceGenerator(VoiceGeneratorBase):
             "model_name": model_name,
             "model": model,
             "voices": voices,
-            "max_context_len": model_config["max_context_len"],
+            "avg_text_len": model_config["avg_text_len"],
             "speed": model_config.get("speed", 1.0)
         }
         if "voice_tone_map" in model_config:
@@ -185,7 +185,7 @@ class VoiceGenerator(VoiceGeneratorBase):
         return text
 
     def generate(self, text, streaming=False):
-        segments = split_text_into_speech_segments(text, max_chunk_len=self.tts_model_params["max_context_len"])
+        segments = split_text_into_speech_segments(text, avg_text_len=self.tts_model_params["avg_text_len"])
 
         text_chunks = []
         gpt_cond_latent = []
