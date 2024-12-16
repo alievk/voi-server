@@ -80,7 +80,8 @@ class VoiceGenerator(VoiceGeneratorBase):
         voice=None,
         narrator_voice=None,
         mute_narrator=False,
-        cached=False
+        cached=False,
+        voice_speed=1.0
     ):
         """ 
         generated_audio_cb receives f32le audio chunks 
@@ -90,6 +91,7 @@ class VoiceGenerator(VoiceGeneratorBase):
         self.model_name = "multispeaker_original" if model_name is None else model_name
         self.language = 'en'
         self.tts_temperature = 0.7
+        self.speed = voice_speed
 
         self.tts_model_params = self.get_model(self.model_name, cached=cached)
         self.tts_model = self.tts_model_params["model"]
@@ -215,6 +217,7 @@ class VoiceGenerator(VoiceGeneratorBase):
                     temperature=self.tts_temperature,
                     gpt_cond_latent=gpt_cond_latent,
                     speaker_embedding=speaker_embedding,
+                    speed=self.speed
                 )
                 audio_chunks.append(chunk["wav"])
 
@@ -261,6 +264,7 @@ class VoiceGenerator(VoiceGeneratorBase):
             temperature=self.tts_temperature,
             gpt_cond_latent=gpt_cond_latent,
             speaker_embedding=speaker_embedding,
+            speed=self.speed
         )
 
         for chunk in audio_chunks:
