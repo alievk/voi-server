@@ -3,7 +3,6 @@ import asyncio
 import queue
 import threading
 import json
-import re
 import itertools
 import librosa
 from loguru import logger
@@ -16,7 +15,7 @@ from audio import adjust_speed
 from TTS.tts.configs.xtts_config import XttsConfig
 from TTS.tts.models.xtts import Xtts
 
-from text import SentenceStream
+from text import SentenceStream, split_text_into_speech_segments
 
 
 class VoiceGeneratorBase:
@@ -183,47 +182,8 @@ class VoiceGenerator(VoiceGeneratorBase):
     def _sanitize_text(self, text):
         return text
 
-    def _split_into_chunks(self, text):
-        chunks = []
-        buffer = ""
-        max_len = self.tts_model_params["max_context_len"]
-        
-        for sent in SentenceStream(text):
-            if not buffer:
-                buffer = sent
-                continue
-            if len(buffer) + len(sent) <= max_len:
-                buffer += ' ' + sent
-            else:
-                chunks.append(buffer)
-                buffer = sent
-                
-        if buffer:
-            chunks.append(buffer)
-        return chunks
-
-    def _split_into_speech_segments(self, text):
-        parts = []
-        last_end = 0
-        
-        for match in re.finditer(r"\*([^*]+)\*", text):
-            if match.start() > last_end:
-                parts.extend({"text": chunk, "role": "character"} 
-                            for chunk in self._split_into_chunks(text[last_end:match.start()].strip()))
-            
-            parts.extend({"text": chunk, "role": "narrator"}
-                        for chunk in self._split_into_chunks(match.group(1).strip()))
-            
-            last_end = match.end()
-        
-        if last_end < len(text):
-            parts.extend({"text": chunk, "role": "character"}
-                        for chunk in self._split_into_chunks(text[last_end:]))
-
-        return [p for p in parts if p["text"]]
-
     def generate(self, text, streaming=False):
-        segments = self._split_into_speech_segments(text)
+        segments = split_text_into_speech_segments(text, max_chunk_len=self.tts_model_params["max_context_len"])
 
         text_chunks = []
         gpt_cond_latent = []
