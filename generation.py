@@ -71,7 +71,7 @@ class DummyVoiceGenerator(VoiceGeneratorBase):
 # Barbora MacLean, Damjan Chapman, Luis Moray
 
 class VoiceGenerator(VoiceGeneratorBase):
-    _cached_tts_model_params = None
+    _model_cache = {}
 
     def __init__(
         self,
@@ -136,16 +136,13 @@ class VoiceGenerator(VoiceGeneratorBase):
 
     @staticmethod
     def get_model(model_name, cached=False):
-        if (cached and 
-            VoiceGenerator._cached_tts_model_params is not None and 
-            VoiceGenerator._cached_tts_model_params["model_name"] == model_name):
-            return VoiceGenerator._cached_tts_model_params
-
-        if VoiceGenerator._cached_tts_model_params:
-            VoiceGenerator._cached_tts_model_params["model"].cpu()
-            del VoiceGenerator._cached_tts_model_params["model"]
-            del VoiceGenerator._cached_tts_model_params["voices"]
-            torch.cuda.empty_cache()
+        if model_name in VoiceGenerator._model_cache:
+            if cached: # return cached model
+                return VoiceGenerator._model_cache[model_name]
+            else: # re-load the model
+                VoiceGenerator._model_cache[model_name]["model"].cpu()
+                del VoiceGenerator._model_cache[model_name]
+                torch.cuda.empty_cache()
 
         model_file = os.path.join(os.path.dirname(__file__), "tts_models.json")
         with open(model_file, "r") as f:
@@ -177,7 +174,7 @@ class VoiceGenerator(VoiceGeneratorBase):
         if "voice_tone_map" in model_config:
             model_params["voice_tone_map"] = model_config["voice_tone_map"]
 
-        VoiceGenerator._cached_tts_model_params = model_params
+        VoiceGenerator._model_cache[model_name] = model_params
 
         return model_params
 
