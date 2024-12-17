@@ -15,7 +15,7 @@ from loguru import logger
 import litellm
 
 from recognition import OnlineASR
-from generation import VoiceGenerator, DummyVoiceGenerator
+from generation import MultiVoiceGenerator, DummyVoiceGenerator, AsyncVoiceGenerator
 from audio import AudioOutputStream, AudioInputStream, WavSaver
 from llm import get_agent_config, stringify_content, ConversationContext, BaseLLMAgent, CharacterLLMAgent, CharacterEchoAgent
 
@@ -24,9 +24,9 @@ class Conversation:
     def __init__(
         self, 
         asr: OnlineASR, 
-        voice_generator: VoiceGenerator,
-        character_agent: BaseLLMAgent,
-        conversation_context: ConversationContext=None
+        voice_generator,
+        character_agent,
+        conversation_context
     ):
         self.asr = asr
         self.voice_generator = voice_generator
@@ -90,7 +90,7 @@ class Conversation:
         else:
             content = message["content"]
 
-        self.voice_generator.generate_async(text=content, id=message["id"])
+        self.voice_generator.generate(text=content, id=message["id"])
 
     def _create_message_from_transcription(self, transcription):
         confirmed = transcription["confirmed_text"]
@@ -198,17 +198,14 @@ async def handle_connection(websocket):
     )
 
     logger.info("Initializing voice generation")
-    if agent_config["tts_model"] == "dummy":
+    if "voices" not in agent_config:
         voice_generator = DummyVoiceGenerator()
     else:
-        voice_generator = VoiceGenerator(
-            cached=True,
-            model_name=agent_config["tts_model"],
-            voice=agent_config.get("voice"),
-            generated_audio_cb=handle_generated_audio,
-            mute_narrator=agent_config.get("mute_narrator", False)
+        voice_generator = MultiVoiceGenerator.from_config(
+            agent_config["voices"],
+            cached=True
         )
-    voice_generator.maybe_set_voice_tone(agent_config.get("narrator_voice_tone"), role="narrator")
+    voice_generator = AsyncVoiceGenerator(voice_generator, generated_audio_cb=handle_generated_audio)
     voice_generator.start()
 
     logger.info("Initializing audio input stream")

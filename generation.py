@@ -10,84 +10,25 @@ from loguru import logger
 import torch
 import numpy as np
 
-from audio import adjust_speed
-
 from TTS.tts.configs.xtts_config import XttsConfig
 from TTS.tts.models.xtts import Xtts
 
-from text import SentenceStream, split_text_into_speech_segments
+from text import split_text_into_speech_segments
 
 
-class VoiceGeneratorBase:
-    def generate(self, text, streaming=False):
-        raise NotImplementedError
-
-    def generate_async(self, text, id=None):
-        raise NotImplementedError
-
-    def maybe_set_voice_tone(self, voice_tone, role="character"):
-        raise NotImplementedError
-
-    def start(self):
-        raise NotImplementedError
-
-    def stop(self):
-        raise NotImplementedError
-
-    @property
-    def sample_rate(self):
-        raise NotImplementedError
-
-
-class DummyVoiceGenerator(VoiceGeneratorBase):
-    def __init__(self, *args, **kwargs):
-        pass
-
-    def generate(self, text, streaming=False):
-        zero_chunk = np.zeros(10000)
-        if streaming:
-            return itertools.repeat(zero_chunk)
-        else:
-            return zero_chunk
-
-    def generate_async(self, text, id=None):
-        pass
-
-    def maybe_set_voice_tone(self, voice_tone, role="character"):
-        pass
-
-    def start(self):
-        pass
-
-    def stop(self):
-        pass
-
-    @property
-    def sample_rate(self):
-        return 24000
-
-
-# OK voices for the multispeaker_original model:
-# Barbora MacLean, Damjan Chapman, Luis Moray
-
-class VoiceGenerator(VoiceGeneratorBase):
+class VoiceGenerator:
     _model_cache = {}
 
     def __init__(
         self,
-        generated_audio_cb=None,
         model_name=None,
         voice=None,
-        narrator_voice=None,
-        mute_narrator=False,
         cached=False,
         voice_speed=1.0
     ):
         """ 
-        generated_audio_cb receives f32le audio chunks 
         valid model_name values are listed in tts_models.json
         """
-        self.generated_audio_cb = generated_audio_cb
         self.model_name = "multispeaker_original" if model_name is None else model_name
         self.language = 'en'
         self.tts_temperature = 0.7
@@ -97,15 +38,8 @@ class VoiceGenerator(VoiceGeneratorBase):
         self.tts_model = self.tts_model_params["model"]
         self.tts_voices = self.tts_model_params["voices"]
 
-        self.mute_narrator = mute_narrator
-
-        self.running = False
-        self.text_queue = None
-        self._event_loop = asyncio.get_event_loop()
-
         default_voice = list(self.tts_voices.keys())[0]
-        self.set_voice(default_voice if voice is None else voice, role="character")
-        self.set_voice(default_voice if narrator_voice is None else narrator_voice, role="narrator")
+        self.set_voice(default_voice if voice is None else voice)
 
     def start(self):
         self.running = True
@@ -117,20 +51,16 @@ class VoiceGenerator(VoiceGeneratorBase):
         self.model_name = model_name
         self.tts_model, self.tts_voices = self.get_model(self.model_name, cached=cached)
 
-    def set_voice(self, voice, role="character"):
+    def set_voice(self, voice):
         if voice not in self.tts_voices:
             raise ValueError(f"Voice {voice} not found. Available voices: {self.tts_voices.keys()}")
 
-        assert role in ["character", "narrator"]
-        if role == "character":
-            self.voice = voice
-        else:
-            self.narrator_voice = voice
+        self.voice = voice
 
-    def maybe_set_voice_tone(self, voice_tone, role="character"):
+    def maybe_set_voice_tone(self, voice_tone):
         if ("voice_tone_map" in self.tts_model_params and
             voice_tone in self.tts_model_params["voice_tone_map"]):
-            self.set_voice(self.tts_model_params["voice_tone_map"][voice_tone], role=role)
+            self.set_voice(self.tts_model_params["voice_tone_map"][voice_tone])
         else:
             logger.warning(f"Voice tone {voice_tone} not found, ignoring")
 
@@ -178,89 +108,36 @@ class VoiceGenerator(VoiceGeneratorBase):
 
         return model_params
 
-    def _sanitize_text(self, text):
+    def _sanitize_text(self, text): 
         return text
 
     def generate(self, text, streaming=False):
-        segments = split_text_into_speech_segments(text, avg_text_len=self.tts_model_params["avg_text_len"])
-
-        text_chunks = []
-        gpt_cond_latent = []
-        speaker_embedding = []
-        for segment in segments:
-            if self.mute_narrator and segment["role"] == "narrator":
-                continue
-            text_chunks.append(segment["text"])
-            voice = self.voice if segment["role"] == "character" else self.narrator_voice
-            gpt_cond_latent.append(self.tts_voices[voice]["gpt_cond_latent"])
-            speaker_embedding.append(self.tts_voices[voice]["speaker_embedding"])
+        # TODO: split text into chunks
 
         if streaming:
-            return itertools.chain.from_iterable(
-                self._stream_generator(
-                    text_chunk,
-                    gpt_cond_latent,
-                    speaker_embedding
-                )
-                for text_chunk, gpt_cond_latent, speaker_embedding 
-                in zip(text_chunks, gpt_cond_latent, speaker_embedding)
-            )
+            return self._stream_generator(text)
         else:
-            audio_chunks = []
-            for text_chunk, gpt_cond_latent, speaker_embedding in zip(text_chunks, gpt_cond_latent, speaker_embedding):
-                chunk = self.tts_model.inference(
-                    text_chunk,
-                    language=self.language,
-                    temperature=self.tts_temperature,
-                    gpt_cond_latent=gpt_cond_latent,
-                    speaker_embedding=speaker_embedding,
-                    speed=self.speed
-                )
-                audio_chunks.append(chunk["wav"])
+            audio = self.tts_model.inference(
+                text,
+                language=self.language,
+                temperature=self.tts_temperature,
+                gpt_cond_latent=self.tts_voices[self.voice]["gpt_cond_latent"],
+                speaker_embedding=self.tts_voices[self.voice]["speaker_embedding"],
+                speed=self.speed
+            )["wav"]
 
-            return self._postprocess(np.concatenate(audio_chunks))
-
-    def generate_async(self, text, id=None):
-        if not self.running:
-            raise RuntimeError("VoiceGenerator is not running")
-
-        self.text_queue.put({"text": text, "id": id})
-
-    def _processing_loop(self):
-        while self.running:
-            item = self.text_queue.get()
-            if item is None:
-                break
-
-            text, id = item["text"], item["id"]
-
-            if text.startswith("file:"):
-                audio_chunk, sr = librosa.load(text[5:], sr=None)
-                duration = len(audio_chunk) / sr
-                asyncio.run_coroutine_threadsafe(self.generated_audio_cb(audio_chunk=audio_chunk, speech_id=id), self._event_loop)
-            else:
-                duration = 0.0
-                for chunk in self.generate(text, streaming=True):
-                    asyncio.run_coroutine_threadsafe(self.generated_audio_cb(audio_chunk=chunk, speech_id=id), self._event_loop)
-                    duration += len(chunk) / self.sample_rate
-                    if not self.running or not self.text_queue.empty(): # stop on new text or interrupt
-                        break
-
-            # end of generation
-            asyncio.run_coroutine_threadsafe(self.generated_audio_cb(audio_chunk=None, speech_id=id, duration=duration), self._event_loop)
+            return self._postprocess(audio)
 
     def _stream_generator(
         self,
-        text,
-        gpt_cond_latent,
-        speaker_embedding,
+        text
     ):
         audio_chunks = self.tts_model.inference_stream(
             text=text,
             language=self.language,
             temperature=self.tts_temperature,
-            gpt_cond_latent=gpt_cond_latent,
-            speaker_embedding=speaker_embedding,
+            gpt_cond_latent=self.tts_voices[self.voice]["gpt_cond_latent"],
+            speaker_embedding=self.tts_voices[self.voice]["speaker_embedding"],
             speed=self.speed
         )
 
@@ -279,3 +156,141 @@ class VoiceGenerator(VoiceGeneratorBase):
         self.text_queue.put(None)
         self.thread.join(timeout=5)
         self.text_queue = None
+
+
+class MultiVoiceGenerator:
+    def __init__(
+        self,
+        generators
+    ):
+        assert isinstance(generators, dict), f"generators must be a \{'role': model\} like dict, but got {generators.__class__}"
+        self.generators = generators
+
+    @staticmethod
+    def from_config(config, cached=False):
+        generators = {}
+        for role, params in config.items():
+            generators[role] = VoiceGenerator(
+                model_name=params["model"],
+                voice=params.get("voice"),
+                cached=cached
+            )
+
+        return MultiVoiceGenerator(generators)
+
+    def _get_segments(self, text):
+        segments = split_text_into_speech_segments(text, avg_text_len=100)
+        roles = set([s["role"] for s in segments])
+        generators = set(self.generators.keys())
+        assert roles <= generators, f"There aren't generators for these roles: {roles - generators}"
+        return segments
+
+    def generate(self, text, streaming=False):
+        segments = self._get_segments(text)
+
+        if streaming:
+            return itertools.chain.from_iterable(
+                self.generators[segment["role"]].generate(segment["text"], streaming=True)
+                for segment in segments
+            )
+        else:
+            audio_chunks = []
+            for segment in segments:
+                chunk = self.generators[segment["role"]].generate(segment["text"], streaming=False)
+                audio_chunks.append(chunk)
+
+            return np.concatenate(audio_chunks)
+
+    @property
+    def sample_rate(self):
+        return self.generators[list(self.generators.keys())[0]].sample_rate
+
+    def maybe_set_voice_tone(self, voice_tone):
+        assert "character" in self.generators, "Only character voice tone is supported for now, but character voice generator is not found"
+        self.generators["character"].maybe_set_voice_tone(voice_tone)
+
+
+class DummyVoiceGenerator:
+    def __init__(self, *args, **kwargs):
+        pass
+
+    def generate(self, text, streaming=False):
+        zero_chunk = np.zeros(int(1 * self.sample_rate)) # 1 second of silence
+        if streaming:
+            return itertools.repeat(zero_chunk, 1)
+        else:
+            return zero_chunk
+
+    def maybe_set_voice_tone(self, voice_tone, role="character"):
+        pass
+
+    @property
+    def sample_rate(self):
+        return 24000
+
+
+class AsyncVoiceGenerator:
+    def __init__(self, voice_generator, generated_audio_cb):
+        """ 
+        generated_audio_cb receives f32le audio chunks 
+        """
+        self.voice_generator = voice_generator
+        self.generated_audio_cb = generated_audio_cb
+        self.running = False
+        self.text_queue = None
+        self._event_loop = asyncio.get_event_loop()
+
+    def generate(self, text, id=None):
+        if not self.running:
+            raise RuntimeError("AsyncVoiceGenerator is not running")
+        self.text_queue.put({"text": text, "id": id})
+
+    def start(self):
+        self.running = True
+        self.text_queue = queue.Queue()
+        self.thread = threading.Thread(target=self._processing_loop)
+        self.thread.start()
+
+    def stop(self):
+        self.running = False
+        self.text_queue.put(None)
+        self.thread.join(timeout=5)
+        self.text_queue = None
+
+    def _processing_loop(self):
+        while self.running:
+            item = self.text_queue.get()
+            if item is None:
+                break
+
+            text, id = item["text"], item["id"]
+
+            if text.startswith("file:"):
+                audio_chunk, sr = librosa.load(text[5:], sr=None)
+                duration = len(audio_chunk) / sr
+                asyncio.run_coroutine_threadsafe(
+                    self.generated_audio_cb(audio_chunk=audio_chunk, speech_id=id), 
+                    self._event_loop
+                )
+            else:
+                duration = 0.0
+                for chunk in self.voice_generator.generate(text, streaming=True):
+                    asyncio.run_coroutine_threadsafe(
+                        self.generated_audio_cb(audio_chunk=chunk, speech_id=id), 
+                        self._event_loop
+                    )
+                    duration += len(chunk) / self.voice_generator.sample_rate
+                    if not self.running or not self.text_queue.empty():
+                        break
+
+            asyncio.run_coroutine_threadsafe(
+                self.generated_audio_cb(audio_chunk=None, speech_id=id, duration=duration),
+                self._event_loop
+            )
+
+    @property
+    def sample_rate(self):
+        return self.voice_generator.sample_rate
+
+    def maybe_set_voice_tone(self, voice_tone):
+        self.voice_generator.maybe_set_voice_tone(voice_tone)
