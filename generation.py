@@ -275,9 +275,6 @@ class VoiceGenerator(VoiceGeneratorBase):
         return 24000
 
     def _postprocess(self, chunk):
-        # I was not able to get speed control working for streaming audio,
-        # so I'm just returning the chunk as is for now
-        # return adjust_speed(chunk, self.tts_model_params["speed"], self.sample_rate)
         return chunk
 
     def stop(self):
