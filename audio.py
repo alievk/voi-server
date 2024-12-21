@@ -18,6 +18,10 @@ def load_audio(fname, sr=None, duration=None):
     return librosa.load(fname, sr=sr, dtype=np.float32, duration=duration)
 
 
+def convert_s16le_to_f32le(buffer):
+    return np.frombuffer(buffer, dtype='<i2').flatten().astype(np.float32) / 32768.0
+
+
 def convert_f32le_to_s16le(buffer):
     return (buffer * 32768.0).astype(np.int16).tobytes()
 
@@ -35,7 +39,7 @@ class WavSaver:
 
     def write(self, chunk):
         """ Input format is s16le (buffer) or f32le (numpy array) """
-        if np.issubdtype(chunk.dtype, np.floating):
+        if isinstance(chunk, np.ndarray) and np.issubdtype(chunk.dtype, np.floating):
             chunk = convert_f32le_to_s16le(chunk)
 
         self.buffer += chunk
@@ -99,18 +103,26 @@ class FakeAudioStream:
 
 
 class AudioInputStream:
-    def __init__(self, converted_audio_cb, chunk_size_ms=1000, input_sample_rate=16000, output_sample_rate=16000):
+    def __init__(
+        self, 
+        converted_audio_cb,
+        output_chunk_size_ms=1000, 
+        input_sample_rate=16000, 
+        output_sample_rate=16000,
+        input_format="webm"
+    ):
         """
-        Asyncronous WebM to f32le conversion.
-        - converted_audio_cb receives f32le audio chunks
+        Converts webm/mp4/ogg/pcm16 to f32le.
         """
+        assert input_format in ["webm", "mp4", "ogg", "pcm16"]
         self.input_sample_rate = input_sample_rate
         self.output_sample_rate = output_sample_rate
         self.ffmpeg_process = None
         self.input_queue = multiprocessing.Queue()
         self.output_queue = multiprocessing.Queue()
         self.converted_audio_cb = converted_audio_cb
-        self.chunk_size = int(chunk_size_ms / 1000 * self.output_sample_rate * 2)
+        self.output_chunk_size = int(output_chunk_size_ms / 1000 * self.output_sample_rate * 2)
+        self.input_format = input_format
         self.running = False
         self.threads = []
 
@@ -118,18 +130,22 @@ class AudioInputStream:
         if self.running:
             return
 
-        self.running = True
-        self.ffmpeg_process = self._start_ffmpeg_process()
         self.threads = [
-            threading.Thread(target=self._ffmpeg_in_pipe, name='ffmpeg-in-pipe', daemon=True),
-            threading.Thread(target=self._ffmpeg_out_pipe, name='ffmpeg-out-pipe', daemon=True),
-            threading.Thread(target=self._audio_callback, name='ffmpeg-callback', daemon=True, args=(asyncio.get_event_loop(),))
+            threading.Thread(target=self._buffering, name='buffering', daemon=True),
+            threading.Thread(target=self._audio_callback, name='audio-callback', daemon=True, args=(asyncio.get_event_loop(),))
         ]
+
+        if self.input_format is not "pcm16":
+            self.ffmpeg_process = self._start_ffmpeg_process()
+            self.threads.insert(0, threading.Thread(target=self._ffmpeg_in_pipe, name='ffmpeg-in-pipe', daemon=True))
+
+        self.running = True # SET BEFORE STARTING THREADS
+
         for thread in self.threads:
             thread.start()
 
     def put(self, chunk):
-        """ chunk is webm """
+        """ chunk is webm/mp4/ogg/pcm16 """
         if not self.running:
             logger.warning("Audio input stream is not running, skipping chunk")
             return
@@ -145,18 +161,21 @@ class AudioInputStream:
             self.ffmpeg_process.stdin.write(chunk)
             self.ffmpeg_process.stdin.flush()
 
-    def _ffmpeg_out_pipe(self):
+    def _buffering(self):
         buffer = bytearray()
         while self.running:
-            pcm_chunk = self.ffmpeg_process.stdout.read(1024)
-            if pcm_chunk == b'':
-                logger.debug("ffmpeg stdout: EOF")
+            if self.input_format == "pcm16":
+                pcm_chunk = self.input_queue.get()
+            else:
+                pcm_chunk = self.ffmpeg_process.stdout.read(1024)
+            if not pcm_chunk:
+                logger.debug("Input audio EOF")
                 break
             
             buffer.extend(pcm_chunk)
-            while len(buffer) >= self.chunk_size:
-                self.output_queue.put(bytes(buffer[:self.chunk_size]))
-                del buffer[:self.chunk_size]
+            while len(buffer) >= self.output_chunk_size:
+                self.output_queue.put(bytes(buffer[:self.output_chunk_size]))
+                del buffer[:self.output_chunk_size]
         
         if buffer:
             self.output_queue.put(bytes(buffer))
@@ -164,9 +183,6 @@ class AudioInputStream:
         self.output_queue.put(None)
 
     def _audio_callback(self, loop):
-        def convert_s16le_to_f32le(buffer):
-            return np.frombuffer(buffer, dtype='<i2').flatten().astype(np.float32) / 32768.0
-
         while self.running:
             s16le_chunk = self.output_queue.get()
             if s16le_chunk is None:
@@ -208,27 +224,39 @@ class AudioInputStream:
 
 
 class AudioOutputStream:
-    def __init__(self, converted_audio_cb, input_sample_rate=16000, output_sample_rate=16000):
+    def __init__(
+        self, 
+        converted_audio_cb, 
+        input_sample_rate=16000, 
+        output_sample_rate=16000,
+        output_format="webm"
+    ):
         """
-        Asyncronous f32le to WebM conversion.
-        - converted_audio_cb receives webm audio chunks
+        Asyncronous f32le to webm/mp4/ogg/pcm16 conversion.
         """
+        assert output_format in ["webm", "mp4", "ogg", "pcm16"]
         self.converted_audio_cb = converted_audio_cb
         self._event_loop = asyncio.get_event_loop()
 
         self.ffmpeg_process = None
         self.out_audio_thread = None
+        self.output_queue = multiprocessing.Queue()
         self.running = False
 
         self.input_sample_rate = input_sample_rate
         self.output_sample_rate = output_sample_rate
-
-        self.output_chunk_size = 1024
+        self.output_format = output_format
 
     def start(self):
-        self.running = True
-        self.ffmpeg_process = self._start_ffmpeg_process()
-        self.out_audio_thread = threading.Thread(target=self._ffmpeg_out_pipe, name='ffmpeg-out-pipe', daemon=True)
+        if self.running:
+            return
+
+        self.running = True # SET BEFORE STARTING THREADS
+
+        if self.output_format != "pcm16":
+            self.ffmpeg_process = self._start_ffmpeg_process()
+
+        self.out_audio_thread = threading.Thread(target=self._audio_callback, name='audio-callback', daemon=True)
         self.out_audio_thread.start()
 
     def put(self, chunk):
@@ -237,13 +265,14 @@ class AudioOutputStream:
             logger.warning("AudioOutputStream is not running")
             return
 
-        def float32_to_int16(float32_array):
-            return np.int16(float32_array * 32768.0)
+        s16le_chunk = convert_f32le_to_s16le(chunk)
 
-        # TODO: this is a blocking call, we should use a queue
-        s16le_chunk = float32_to_int16(chunk).tobytes()
-        self.ffmpeg_process.stdin.write(s16le_chunk)
-        self.ffmpeg_process.stdin.flush()
+        if self.output_format == "pcm16":
+            self.output_queue.put(s16le_chunk)
+        else:
+            # TODO: this is a blocking call, we should use a queue
+            self.ffmpeg_process.stdin.write(s16le_chunk)
+            self.ffmpeg_process.stdin.flush()
 
     def _start_ffmpeg_process(self):
         return subprocess.Popen([
@@ -258,11 +287,15 @@ class AudioOutputStream:
             "pipe:1"
         ], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
-    def _ffmpeg_out_pipe(self):
+    def _audio_callback(self):
         while self.running:
-            chunk = self.ffmpeg_process.stdout.read(512)
-            if chunk == b'':
-                logger.debug("ffmpeg stdout: EOF")
+            if self.output_format == "pcm16":
+                chunk = self.output_queue.get()
+            else:
+                chunk = self.ffmpeg_process.stdout.read(512)
+
+            if not chunk:
+                logger.debug("Output audio EOF")
                 break
 
             asyncio.run_coroutine_threadsafe(self.converted_audio_cb(chunk), self._event_loop)
@@ -273,8 +306,12 @@ class AudioOutputStream:
         if not self.running:
             return
 
-        self.ffmpeg_process.stdin.close()
-        self.ffmpeg_process.wait()
+        if self.output_format == "pcm16":
+            self.output_queue.put(None)
+        elif self.ffmpeg_process:
+            self.ffmpeg_process.stdin.close()
+            self.ffmpeg_process.wait()
+
         self.out_audio_thread.join(timeout=5)
         self.running = False
 

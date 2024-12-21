@@ -16,7 +16,7 @@ import litellm
 
 from recognition import OnlineASR
 from generation import MultiVoiceGenerator, DummyVoiceGenerator, AsyncVoiceGenerator
-from audio import AudioOutputStream, AudioInputStream, WavSaver
+from audio import AudioOutputStream, AudioInputStream, WavSaver, convert_f32le_to_s16le
 from llm import get_agent_config, stringify_content, ConversationContext, BaseLLMAgent, CharacterLLMAgent, CharacterEchoAgent
 
 
@@ -163,11 +163,10 @@ async def handle_connection(websocket):
             conversation.on_assistant_audio_end(speech_id, duration)
         else:
             audio_output_stream.put(audio_chunk)
-            audio_output_saver.write(audio_chunk)
             last_assistant_speech_id = speech_id # hack
 
     @logger.catch
-    async def handle_webm_audio(audio_chunk):
+    async def handle_output_audio(audio_chunk):
         # chunk is webm
         nonlocal last_assistant_speech_id
         if audio_chunk is not None:
@@ -176,6 +175,7 @@ async def handle_connection(websocket):
                 # FIXME: we can't get audio id here because we're using ffmpeg to convert source audio to webm and lose audio id
                 "speech_id": last_assistant_speech_id
             }
+            audio_output_saver.write(audio_chunk)
             try:
                 await websocket.send(serialize_message(metadata, audio_chunk))
             except Exception as e:
@@ -211,17 +211,19 @@ async def handle_connection(websocket):
     logger.info("Initializing audio input stream")
     audio_input_stream = AudioInputStream(
         handle_input_audio,
-        chunk_size_ms=1000,
+        output_chunk_size_ms=1000,
         input_sample_rate=16000, # client sends 16000
-        output_sample_rate=asr.sample_rate
+        output_sample_rate=asr.sample_rate,
+        input_format="pcm16"
     )
     audio_input_stream.start()
 
     logger.info("Initializing audio output stream")
     audio_output_stream = AudioOutputStream(
-        handle_webm_audio,
+        handle_output_audio,
         input_sample_rate=voice_generator.sample_rate,
-        output_sample_rate=voice_generator.sample_rate
+        output_sample_rate=voice_generator.sample_rate,
+        output_format="pcm16"
     )
     audio_output_stream.start()
 
@@ -266,6 +268,7 @@ async def handle_connection(websocket):
     try:
         async for message in websocket:
             if isinstance(message, bytes):
+                logger.debug(f"Received audio chunk: {len(message)} bytes")
                 audio_input_stream.put(message)
             else:
                 try:
