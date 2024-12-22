@@ -150,7 +150,7 @@ class ConversationContext:
                     percent = msg["interrupted_at"] / msg["audio_duration"]
                     if percent < 1: # if percent > 1, the message was not interrupted
                         orig_content = msg["content"]["text"] if isinstance(msg["content"], dict) else msg["content"]
-                        cut_content = orig_content[:int(len(orig_content) * percent)] + "..."
+                        cut_content = orig_content[:int(len(orig_content) * percent)] + "... (interrupted)"
                         if isinstance(msg["content"], dict):
                             msg["content"]["text"] = cut_content
                         else:
