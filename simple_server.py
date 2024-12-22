@@ -67,6 +67,9 @@ class Conversation:
         self._maybe_respond()
 
     def _maybe_respond(self):
+        asyncio.run_coroutine_threadsafe(self._maybe_respond_async(), self._event_loop)
+
+    async def _maybe_respond_async(self):
         need_response = self.conversation_context.messages and self.conversation_context.messages[-1]["role"] == "user"
         if need_response:
             self.conversation_context.process_interrupted_messages()
