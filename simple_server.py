@@ -16,7 +16,7 @@ import litellm
 
 from recognition import OnlineASR
 from generation import MultiVoiceGenerator, DummyVoiceGenerator, AsyncVoiceGenerator
-from audio import AudioOutputStream, AudioInputStream, WavSaver, convert_f32le_to_s16le
+from audio import AudioOutputStream, AudioInputStream, WavSaver
 from llm import get_agent_config, stringify_content, ConversationContext, BaseLLMAgent, CharacterLLMAgent, CharacterEchoAgent
 
 
@@ -157,29 +157,25 @@ async def handle_connection(websocket):
     @logger.catch
     async def handle_generated_audio(audio_chunk, speech_id, duration=None):
         # audio_chunk is f32le
-        nonlocal last_assistant_speech_id
         if audio_chunk is None: # end of audio
             audio_output_stream.flush()
             conversation.on_assistant_audio_end(speech_id, duration)
         else:
-            audio_output_stream.put(audio_chunk)
-            last_assistant_speech_id = speech_id # hack
+            audio_output_stream.put(audio_chunk, speech_id)
 
     @logger.catch
-    async def handle_output_audio(audio_chunk):
-        # chunk is webm
-        nonlocal last_assistant_speech_id
+    async def handle_output_audio(audio_chunk, speech_id):
+        # chunk is webm/mp4/ogg/pcm16
         if audio_chunk is not None:
             metadata = {
                 "type": "audio",
-                # FIXME: we can't get audio id here because we're using ffmpeg to convert source audio to webm and lose audio id
-                "speech_id": last_assistant_speech_id
+                "speech_id": str(speech_id)
             }
-            audio_output_saver.write(audio_chunk)
             try:
                 await websocket.send(serialize_message(metadata, audio_chunk))
             except Exception as e:
                 logger.error(f"Error sending audio chunk: {e}")
+            audio_output_saver.write(audio_chunk) # TODO: once per 1Mb it flushes buffer (blocking)
 
     @logger.catch
     async def read_init_message(websocket):
@@ -257,11 +253,6 @@ async def handle_connection(websocket):
         sample_rate=voice_generator.sample_rate
     )
 
-    # we need to send speech id to the client to identify which agent speech was interrupted by the user
-    # this variable is a hack to keep track of the last speech id because ffmpeg audio converter loses speech id
-    # one possible solution is to use a converter which will preserve metadata like speech id
-    last_assistant_speech_id = 0
-
     conversation.greeting()
 
     logger.info("Entering main loop")
@@ -286,8 +277,8 @@ async def handle_connection(websocket):
                     elif message_type == "interrupt":
                         logger.info("Received interrupt message")
                         conversation.on_user_interrupt(
-                            speech_id=message_data["speech_id"], 
-                            interrupted_at=message_data["interrupted_at_ms"] / 1000.0)
+                            speech_id=int(message_data["speech_id"]), 
+                            interrupted_at=message_data["interrupted_at"])
                     else:
                         logger.warning(f"Received unexpected type: {message_type}")
                 except json.JSONDecodeError:

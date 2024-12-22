@@ -259,7 +259,7 @@ class AudioOutputStream:
         self.out_audio_thread = threading.Thread(target=self._audio_callback, name='audio-callback', daemon=True)
         self.out_audio_thread.start()
 
-    def put(self, chunk):
+    def put(self, chunk, speech_id=None):
         """ chunk is f32le """
         if not self.running:
             logger.warning("AudioOutputStream is not running")
@@ -268,7 +268,7 @@ class AudioOutputStream:
         s16le_chunk = convert_f32le_to_s16le(chunk)
 
         if self.output_format == "pcm16":
-            self.output_queue.put(s16le_chunk)
+            self.output_queue.put((s16le_chunk, speech_id))
         else:
             # TODO: this is a blocking call, we should use a queue
             self.ffmpeg_process.stdin.write(s16le_chunk)
@@ -290,24 +290,25 @@ class AudioOutputStream:
     def _audio_callback(self):
         while self.running:
             if self.output_format == "pcm16":
-                chunk = self.output_queue.get()
+                chunk, speech_id = self.output_queue.get()
             else:
                 chunk = self.ffmpeg_process.stdout.read(512)
+                speech_id = None # not implemented
 
             if not chunk:
                 logger.debug("Output audio EOF")
                 break
 
-            asyncio.run_coroutine_threadsafe(self.converted_audio_cb(chunk), self._event_loop)
+            asyncio.run_coroutine_threadsafe(self.converted_audio_cb(chunk, speech_id), self._event_loop)
 
-        asyncio.run_coroutine_threadsafe(self.converted_audio_cb(None), self._event_loop)
+        asyncio.run_coroutine_threadsafe(self.converted_audio_cb(None, None), self._event_loop)
 
     def stop(self):
         if not self.running:
             return
 
         if self.output_format == "pcm16":
-            self.output_queue.put(None)
+            self.output_queue.put((None, None))
         elif self.ffmpeg_process:
             self.ffmpeg_process.stdin.close()
             self.ffmpeg_process.wait()
