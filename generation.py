@@ -24,7 +24,9 @@ class VoiceGenerator:
         model_name=None,
         voice=None,
         cached=False,
-        voice_speed=1.0
+        voice_speed=1.0,
+        leading_silence=None,
+        trailing_silence=None
     ):
         """ 
         valid model_name values are listed in tts_models.json
@@ -33,6 +35,8 @@ class VoiceGenerator:
         self.language = 'en'
         self.tts_temperature = 0.7
         self.speed = voice_speed
+        self.leading_silence = 0.0 if leading_silence is None else leading_silence
+        self.trailing_silence = 0.0 if trailing_silence is None else trailing_silence
 
         self.tts_model_params = self.get_model(self.model_name, cached=cached)
         self.tts_model = self.tts_model_params["model"]
@@ -111,11 +115,21 @@ class VoiceGenerator:
     def _sanitize_text(self, text): 
         return text
 
+    def _generate_silence(self, duration, streaming=False):
+        if streaming:
+            return itertools.repeat(np.zeros(int(duration * self.sample_rate), dtype=np.float32), 1)
+        else:
+            return np.zeros(int(duration * self.sample_rate), dtype=np.float32)
+
     def generate(self, text, streaming=False):
         # TODO: split text into chunks
 
         if streaming:
-            return self._stream_generator(text)
+            return itertools.chain.from_iterable([
+                self._generate_silence(self.leading_silence, streaming=True),
+                self._stream_generator(text),
+                self._generate_silence(self.trailing_silence, streaming=True)
+            ])
         else:
             audio = self.tts_model.inference(
                 text,
@@ -126,7 +140,11 @@ class VoiceGenerator:
                 speed=self.speed
             )["wav"]
 
-            return self._postprocess(audio)
+            return np.concatenate([
+                self._generate_silence(self.leading_silence),
+                audio,
+                self._generate_silence(self.trailing_silence)
+            ])
 
     def _stream_generator(
         self,
@@ -142,14 +160,11 @@ class VoiceGenerator:
         )
 
         for chunk in audio_chunks:
-            yield self._postprocess(chunk.cpu().numpy())
+            yield chunk.cpu().numpy()
 
     @property
     def sample_rate(self):
         return 24000
-
-    def _postprocess(self, chunk):
-        return chunk
 
     def stop(self):
         self.running = False
@@ -173,7 +188,9 @@ class MultiVoiceGenerator:
             generators[role] = VoiceGenerator(
                 model_name=params["model"],
                 voice=params.get("voice"),
-                cached=cached
+                leading_silence=params.get("leading_silence"),
+                trailing_silence=params.get("trailing_silence"),
+                cached=cached,
             )
 
         return MultiVoiceGenerator(generators)
@@ -268,6 +285,7 @@ class AsyncVoiceGenerator:
             if text.startswith("file:"):
                 audio_chunk, sr = librosa.load(text[5:], sr=None)
                 duration = len(audio_chunk) / sr
+                # TODO: need to split the file into chunks and send them to the callback
                 asyncio.run_coroutine_threadsafe(
                     self.generated_audio_cb(audio_chunk=audio_chunk, speech_id=id), 
                     self._event_loop
