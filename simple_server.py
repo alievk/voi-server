@@ -9,7 +9,7 @@ from loguru import logger
 
 from recognition import OnlineASR
 from generation import MultiVoiceGenerator, DummyVoiceGenerator, AsyncVoiceGenerator
-from audio import AudioOutputStream, AudioInputStream, WavSaver
+from audio import AudioOutputStream, AudioInputStream, WavSaver, convert_f32le_to_s16le
 from llm import get_agent_config, stringify_content, ConversationContext, BaseLLMAgent, CharacterLLMAgent, CharacterEchoAgent
 
 
@@ -154,23 +154,18 @@ async def handle_connection(websocket):
     async def handle_generated_audio(audio_chunk, speech_id, duration=None):
         # audio_chunk is f32le
         if audio_chunk is None: # end of audio
-            audio_output_stream.flush()
             conversation.on_assistant_audio_end(speech_id, duration)
         else:
-            audio_output_stream.put(audio_chunk, speech_id)
-
-    @logger.catch
-    async def handle_output_audio(audio_chunk, speech_id):
-        # chunk is webm/mp4/ogg/pcm16
-        if audio_chunk is not None:
             metadata = {
                 "type": "audio",
                 "speech_id": str(speech_id)
             }
             try:
-                await websocket.send(serialize_message(metadata, audio_chunk))
+                s16le_chunk = convert_f32le_to_s16le(audio_chunk)
+                await websocket.send(serialize_message(metadata, s16le_chunk))
             except Exception as e:
                 logger.error(f"Error sending audio chunk: {e}")
+
             audio_output_saver.write(audio_chunk) # TODO: once per 1Mb it flushes buffer (blocking)
 
     @logger.catch
@@ -209,15 +204,6 @@ async def handle_connection(websocket):
         input_format="pcm16"
     )
     audio_input_stream.start()
-
-    logger.info("Initializing audio output stream")
-    audio_output_stream = AudioOutputStream(
-        handle_output_audio,
-        input_sample_rate=voice_generator.sample_rate,
-        output_sample_rate=voice_generator.sample_rate,
-        output_format="pcm16"
-    )
-    audio_output_stream.start()
 
     logger.info("Initializing response agent")
     if agent_config["llm_model"] == "echo":
@@ -286,7 +272,6 @@ async def handle_connection(websocket):
         logger.info("Cleaning up resources")
         voice_generator.stop()
         audio_input_stream.stop()
-        audio_output_stream.stop()
         audio_input_saver.close()
         audio_output_saver.close()
 
