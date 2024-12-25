@@ -168,16 +168,42 @@ async def handle_connection(websocket):
 
             audio_output_saver.write(audio_chunk) # TODO: once per 1Mb it flushes buffer (blocking)
 
-    @logger.catch
-    async def read_init_message(websocket):
-        data = await websocket.recv()
-        init_message = json.loads(data)
-        assert init_message["type"] == "init", f"The first message must be a JSON with 'init' type, but got: {init_message}"
-        assert "agent_name" in init_message, f"The first message must contain 'agent_name' field, but got: {init_message}"
-        return init_message
-    
-    init_message = await read_init_message(websocket)
-    agent_config = get_agent_config(init_message["agent_name"])
+    async def send_error(error_message):
+        try:
+            await websocket.send(serialize_message({"type": "error", "error": error_message}))
+        except Exception as e:
+            logger.error(f"Error sending error message: {e}")
+
+    async def get_validated_init_message():
+        try:
+            data = await websocket.recv()
+            init_message = json.loads(data)
+            logger.info("Received init message: {}", init_message)
+
+            if "agent_name" not in init_message:
+                raise ValueError("Missing required field 'agent_name'")
+
+            agent_config = get_agent_config(init_message["agent_name"])
+            if not agent_config:
+                raise KeyError(f"Agent '{init_message['agent_name']}' not found")
+
+            return agent_config
+
+        except (json.JSONDecodeError, ValueError, KeyError) as e:
+            error_msg = f"Init message error: {str(e)}"
+            logger.error(error_msg)
+            await send_error(error_msg)
+            return None
+        except Exception as e:
+            error_msg = f"Unexpected error: {str(e)}"
+            logger.error(error_msg)
+            await send_error(error_msg)
+            return None
+
+    logger.info("Waiting for init message")
+    agent_config = await get_validated_init_message()
+    if not agent_config:
+        return
 
     logger.info("Initializing speech recognition")
     asr = OnlineASR(
