@@ -242,6 +242,8 @@ async def handle_connection(websocket):
         async for message in websocket:
             if isinstance(message, bytes):
                 logger.debug(f"Received audio chunk: {len(message)} bytes")
+                if not audio_input_stream.is_running():
+                    audio_input_stream.start()
                 audio_input_stream.put(message)
             else:
                 try:
@@ -250,7 +252,7 @@ async def handle_connection(websocket):
                     if message_type == "start_recording":
                         logger.info("Received start_recording message")
                         audio_input_stream.start()
-                    elif message_type == "stop_recording":
+                    elif message_type in ["create_response", "stop_recording"]:
                         logger.info("Received stop_recording message")
                         audio_input_stream.stop()
                     elif message_type == "manual_text":
