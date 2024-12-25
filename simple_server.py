@@ -235,6 +235,8 @@ async def handle_connection(websocket):
         sample_rate=voice_generator.sample_rate
     )
 
+    await websocket.send(serialize_message({"type": "init_done"}))
+
     conversation.greeting()
 
     logger.info("Entering main loop")
