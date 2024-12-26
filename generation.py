@@ -17,6 +17,9 @@ from audio import FakeAudioStream
 from text import split_text_into_speech_segments
 
 
+cuda_lock = threading.Lock()
+
+
 class VoiceGenerator:
     _model_cache = {}
 
@@ -132,14 +135,15 @@ class VoiceGenerator:
                 self._generate_silence(self.trailing_silence, streaming=True)
             ])
         else:
-            audio = self.tts_model.inference(
-                text,
-                language=self.language,
-                temperature=self.tts_temperature,
-                gpt_cond_latent=self.tts_voices[self.voice]["gpt_cond_latent"],
-                speaker_embedding=self.tts_voices[self.voice]["speaker_embedding"],
-                speed=self.speed
-            )["wav"]
+            with cuda_lock:
+                audio = self.tts_model.inference(
+                    text,
+                    language=self.language,
+                    temperature=self.tts_temperature,
+                    gpt_cond_latent=self.tts_voices[self.voice]["gpt_cond_latent"],
+                    speaker_embedding=self.tts_voices[self.voice]["speaker_embedding"],
+                    speed=self.speed
+                )["wav"]
 
             return np.concatenate([
                 self._generate_silence(self.leading_silence),
@@ -160,8 +164,9 @@ class VoiceGenerator:
             speed=self.speed
         )
 
-        for chunk in audio_chunks:
-            yield chunk.cpu().numpy()
+        with cuda_lock:
+            for chunk in audio_chunks:
+                yield chunk.cpu().numpy()
 
     @property
     def sample_rate(self):

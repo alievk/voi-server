@@ -1,5 +1,5 @@
 import numpy as np
-import librosa
+import threading
 from loguru import logger
 
 import torch
@@ -14,6 +14,9 @@ MAX_AUDIO_BUFFER_DURATION = 15 # seconds
 FAST_FORWARD_TIME_MARGIN = 0.1 # seconds
 
 ASR_CONTEXT_LENGTH = 200 # words
+
+
+cuda_lock = threading.Lock()
 
 
 class AudioBuffer:
@@ -186,21 +189,23 @@ class OfflineASR:
         self.align_metadata = model_params["align_metadata"]
 
     def transcribe(self, audio, previous_text=None):
-        transcript = self.model.transcribe(
-            audio, 
-            batch_size=self.batch_size, 
-            language=self.language, 
-            previous_text=previous_text
-        )
+        with cuda_lock:
+            transcript = self.model.transcribe(
+                audio, 
+                batch_size=self.batch_size, 
+                language=self.language, 
+                previous_text=previous_text
+            )
 
-        result = whisperx.align(
-            transcript=transcript["segments"], 
-            model=self.model_a, 
-            align_model_metadata=self.align_metadata, 
-            audio=audio, 
-            device=self.device, 
-            return_char_alignments=False
-        )
+        with cuda_lock:
+            result = whisperx.align(
+                transcript=transcript["segments"], 
+                model=self.model_a, 
+                align_model_metadata=self.align_metadata, 
+                audio=audio, 
+                device=self.device, 
+                return_char_alignments=False
+            )
 
         return self._to_words(result)
 
