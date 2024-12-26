@@ -26,12 +26,14 @@ class Conversation:
         asr: OnlineASR, 
         voice_generator,
         character_agent,
-        conversation_context
+        conversation_context,
+        error_cb=None
     ):
         self.asr = asr
         self.voice_generator = voice_generator
         self.character_agent = character_agent
         self.conversation_context = conversation_context
+        self.error_cb = error_cb
 
         self._event_loop = asyncio.get_event_loop()
 
@@ -40,7 +42,7 @@ class Conversation:
         message = self.conversation_context.add_message(message)
         self._generate_voice(message)
 
-    @logger.catch
+    @logger.catch(reraise=True)
     async def handle_input_audio(self, audio_chunk):
         """ audio_chunk is f32le """
         end_of_audio = audio_chunk is None
@@ -70,30 +72,41 @@ class Conversation:
         asyncio.run_coroutine_threadsafe(self._maybe_respond_async(), self._event_loop)
 
     async def _maybe_respond_async(self):
-        need_response = self.conversation_context.messages and self.conversation_context.messages[-1]["role"] == "user"
-        if need_response:
-            self.conversation_context.process_interrupted_messages()
-            response = self.character_agent.completion(self.conversation_context)
+        try:
+            need_response = self.conversation_context.messages and self.conversation_context.messages[-1]["role"] == "user"
+            if need_response:
+                self.conversation_context.process_interrupted_messages()
+                response = self.character_agent.completion(self.conversation_context)
 
-            message = {
-                "role": "assistant",
-                "content": response,
-                "time": datetime.now()
-            }
-            new_message = self.conversation_context.add_message(message)
+                message = {
+                    "role": "assistant",
+                    "content": response,
+                    "time": datetime.now()
+                }
+                new_message = self.conversation_context.add_message(message)
 
-            self._generate_voice(new_message)
+                self._generate_voice(new_message)
+        except Exception as e:
+            self.emit_error(e)
+            raise e
+
+    def emit_error(self, error):
+        if self.error_cb:
+            asyncio.run_coroutine_threadsafe(self.error_cb(error), self._event_loop)
 
     def _generate_voice(self, message):
-        if message.get("file"): # play cached audio
-            content = f"file:{message['file']}"
-        elif isinstance(message["content"], dict):
-            self.voice_generator.maybe_set_voice_tone(message["content"].get("voice_tone"))
-            content = message["content"]["text"]
-        else:
-            content = message["content"]
+        try:
+            if message.get("file"): # play cached audio
+                content = f"file:{message['file']}"
+            elif isinstance(message["content"], dict):
+                self.voice_generator.maybe_set_voice_tone(message["content"].get("voice_tone"))
+                content = message["content"]["text"]
+            else:
+                content = message["content"]
 
-        self.voice_generator.generate(text=content, id=message["id"])
+            self.voice_generator.generate(text=content, id=message["id"])
+        except Exception as e:
+            self.emit_error(e)
 
     def _create_message_from_transcription(self, transcription):
         confirmed = transcription["confirmed_text"]
@@ -118,28 +131,49 @@ class Conversation:
         self.conversation_context.update_message(messages[0]["id"], interrupted_at=interrupted_at)
 
 
+def serialize_message(metadata, blob=None):
+    metadata = json.dumps(metadata).encode('utf-8')
+    metadata_length = len(metadata).to_bytes(4, byteorder='big')
+    if blob is None:
+        return metadata_length + metadata
+    else:
+        return metadata_length + metadata + blob
+
+
+async def send_error(websocket, error_message):
+    try:
+        await websocket.send(serialize_message({"type": "error", "error": error_message}))
+    except Exception as e:
+        logger.error(f"Error sending error message: {e}")
+
+
 async def handle_connection(websocket):
+    try:
+        await handle_conversation(websocket)
+    except Exception as e:
+        await send_error(websocket, f"Error in handle_connection: {e}")
+
+
+async def handle_conversation(websocket):
     log_dir = f"logs/conversations/{get_timestamp()}"
     logger.add(f"{log_dir}/server.log", rotation="100 MB")
 
     logger.info("New connection is started")
 
-    def serialize_message(metadata, blob=None):
-        metadata = json.dumps(metadata).encode('utf-8')
-        metadata_length = len(metadata).to_bytes(4, byteorder='big')
-        if blob is None:
-            return metadata_length + metadata
-        else:
-            return metadata_length + metadata + blob
+    async def voice_generator_error_handler(error):
+        await send_error(websocket, f"Error in VoiceGenerator: {error}")
 
-    @logger.catch
+    async def conversation_error_handler(error):
+        await send_error(websocket, f"Error in Conversation: {error}")
+
+    @logger.catch(reraise=True)
     async def handle_input_audio(audio_chunk):
         # audio_chunk is f32le
         await conversation.handle_input_audio(audio_chunk)
         if audio_chunk is not None:
             audio_input_saver.write(audio_chunk)
 
-    @logger.catch
+    @logger.catch(reraise=True)
     async def handle_context_changed(context):
         messages = context.get_messages(filter=lambda msg: not msg["handled"])
         for msg in messages:
@@ -157,7 +191,7 @@ async def handle_connection(websocket):
             except Exception as e:
                 logger.error(f"Error sending message: {e}")
 
-    @logger.catch
+    @logger.catch(reraise=True)
     async def handle_generated_audio(audio_chunk, speech_id, duration=None):
         # audio_chunk is f32le
         if audio_chunk is None: # end of audio
@@ -174,12 +208,6 @@ async def handle_connection(websocket):
                 logger.error(f"Error sending audio chunk: {e}")
 
             audio_output_saver.write(audio_chunk) # TODO: once per 1Mb it flushes buffer (blocking)
-
-    async def send_error(error_message):
-        try:
-            await websocket.send(serialize_message({"type": "error", "error": error_message}))
-        except Exception as e:
-            logger.error(f"Error sending error message: {e}")
 
     async def get_validated_init_message():
         try:
@@ -225,7 +253,11 @@ async def handle_connection(websocket):
             agent_config["voices"],
             cached=True
         )
-    voice_generator = AsyncVoiceGenerator(voice_generator, generated_audio_cb=handle_generated_audio)
+    voice_generator = AsyncVoiceGenerator(
+        voice_generator, 
+        generated_audio_cb=handle_generated_audio,
+        error_cb=voice_generator_error_handler
+    )
     voice_generator.start()
 
     logger.info("Initializing audio input stream")
@@ -253,7 +285,8 @@ async def handle_connection(websocket):
         asr=asr,
         voice_generator=voice_generator,
         character_agent=character_agent,
-        conversation_context=conversation_context
+        conversation_context=conversation_context,
+        error_cb=conversation_error_handler
     )
 
     logger.info("Initializing audio input saver")

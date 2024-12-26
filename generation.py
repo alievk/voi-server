@@ -248,12 +248,18 @@ class DummyVoiceGenerator:
 
 
 class AsyncVoiceGenerator:
-    def __init__(self, voice_generator, generated_audio_cb):
+    def __init__(
+        self, 
+        voice_generator, 
+        generated_audio_cb, 
+        error_cb=None
+    ):
         """ 
         generated_audio_cb receives f32le audio chunks 
         """
         self.voice_generator = voice_generator
         self.generated_audio_cb = generated_audio_cb
+        self.error_cb = error_cb
         self.running = False
         self.text_queue = None
         self._event_loop = asyncio.get_event_loop()
@@ -276,36 +282,44 @@ class AsyncVoiceGenerator:
         self.text_queue = None
 
     def _processing_loop(self):
-        while self.running:
-            item = self.text_queue.get()
-            if item is None:
-                break
+        try:
+            while self.running:
+                item = self.text_queue.get()
+                if item is None:
+                    break
 
-            text, id = item["text"], item["id"]
+                text, id = item["text"], item["id"]
 
-            if text.startswith("file:"):
-                stream = FakeAudioStream(text[5:], chunk_length=0.1, sr=self.sample_rate)
-                duration = stream.duration
-                for chunk, _ in stream:
-                    asyncio.run_coroutine_threadsafe(
-                        self.generated_audio_cb(audio_chunk=chunk, speech_id=id), 
-                        self._event_loop
-                    )
-            else:
-                duration = 0.0
-                for chunk in self.voice_generator.generate(text, streaming=True):
-                    asyncio.run_coroutine_threadsafe(
-                        self.generated_audio_cb(audio_chunk=chunk, speech_id=id), 
-                        self._event_loop
-                    )
-                    duration += len(chunk) / self.voice_generator.sample_rate
-                    if not self.running or not self.text_queue.empty():
-                        break
+                if text.startswith("file:"):
+                    stream = FakeAudioStream(text[5:], chunk_length=0.1, sr=self.sample_rate)
+                    duration = stream.duration
+                    for chunk, _ in stream:
+                        asyncio.run_coroutine_threadsafe(
+                            self.generated_audio_cb(audio_chunk=chunk, speech_id=id), 
+                            self._event_loop
+                        )
+                else:
+                    duration = 0.0
+                    for chunk in self.voice_generator.generate(text, streaming=True):
+                        asyncio.run_coroutine_threadsafe(
+                            self.generated_audio_cb(audio_chunk=chunk, speech_id=id), 
+                            self._event_loop
+                        )
+                        duration += len(chunk) / self.voice_generator.sample_rate
+                        if not self.running or not self.text_queue.empty():
+                            break
 
-            asyncio.run_coroutine_threadsafe(
-                self.generated_audio_cb(audio_chunk=None, speech_id=id, duration=duration),
-                self._event_loop
-            )
+                asyncio.run_coroutine_threadsafe(
+                    self.generated_audio_cb(audio_chunk=None, speech_id=id, duration=duration),
+                    self._event_loop
+                )
+        except Exception as e:
+            self.emit_error(e)
+            raise e
+
+    def emit_error(self, error):
+        if self.error_cb:
+            asyncio.run_coroutine_threadsafe(self.error_cb(error), self._event_loop)
 
     @property
     def sample_rate(self):

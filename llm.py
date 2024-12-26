@@ -159,7 +159,7 @@ class ConversationContext:
                         msg["handled"] = False
 
 
-@logger.catch
+@logger.catch(reraise=True)
 def get_agent_config(agent_name):
     with open(os.path.join(os.path.dirname(__file__), "agents.json"), "r") as f:
         config = json.load(f)
@@ -200,7 +200,7 @@ class BaseLLMAgent:
     def output_json(self):
         return self._output_json
 
-    @logger.catch
+    @logger.catch(reraise=True)
     def completion(self, context, stream=False, temperature=0.5):
         assert hasattr(context, 'get_messages'), "Context must have get_messages method"
         assert not (stream and self.output_json), "Streamed JSON responses are not supported"
