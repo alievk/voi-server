@@ -2,6 +2,8 @@ import asyncio
 import json
 from datetime import datetime
 import signal
+import os
+from threading import Lock
 
 import torch
 import websockets
@@ -12,6 +14,11 @@ from generation import MultiVoiceGenerator, DummyVoiceGenerator, AsyncVoiceGener
 from audio import AudioOutputStream, AudioInputStream, WavSaver, convert_f32le_to_s16le
 from llm import get_agent_config, stringify_content, ConversationContext, BaseLLMAgent, CharacterLLMAgent, CharacterEchoAgent
 
+os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
+torch.backends.cudnn.benchmark = False
+torch.backends.cudnn.deterministic = True
+
+cuda_lock = Lock()
 
 class Conversation:
     def __init__(
@@ -309,7 +316,8 @@ async def handle_connection(websocket):
         audio_input_saver.close()
         audio_output_saver.close()
 
-        torch.cuda.empty_cache()
+        with cuda_lock:
+            torch.cuda.empty_cache()
         
     logger.info("Connection is done")
 
@@ -352,6 +360,4 @@ async def main():
 
 
 if __name__ == "__main__":
-    torch.backends.cudnn.benchmark = False
-    torch.backends.cudnn.deterministic = True
     asyncio.run(main())
