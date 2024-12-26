@@ -292,9 +292,13 @@ async def handle_connection(websocket):
                             speech_id=int(message_data["speech_id"]), 
                             interrupted_at=message_data["interrupted_at"])
                     else:
-                        logger.warning(f"Received unexpected type: {message_type}")
-                except json.JSONDecodeError:
-                    logger.warning(f"Received invalid JSON message: {message}")
+                        e = f"Received unexpected type: {message_type}"
+                        logger.warning(e)
+                        await send_error(e)
+                except Exception as e:
+                    e = f"Error processing message {message}: {e}"
+                    logger.warning(e)
+                    await send_error(e)
         logger.info("WebSocket connection closed, checking timeout")
     except websockets.exceptions.ConnectionClosed:
         logger.info("WebSocket connection closed unexpectedly")
