@@ -10,14 +10,6 @@ from loguru import logger
 from text import SentenceStream
 
 
-user_message_format_description = """User messages are transcriptions of the user's audio.
-Transcriptions consist of confirmed words followed by unconfirmed words in parentheses.
-Confirmed words are the words reliably recognized by the speech-to-text system.
-Unconfirmed words are the words which are not reliably recognized.
-You must ignore unconfirmed words if:
-  - They are not consistent with the user's previous speech
-  """
-
 voice_tone_description = """<character voice tone> is used by the voice generator to choose the appropriate voice and intonation for <character response text>.
 <character voice tone> is strictly one of the following:
   - "neutral": conversation is normal, neutral, like a business conversation or a conversation with a new acquaintance or a stranger
@@ -184,7 +176,6 @@ class BaseLLMAgent:
         if isinstance(system_prompt, list):
             system_prompt = "\n".join(system_prompt)
 
-        system_prompt = system_prompt.replace("{user_message_format_description}", user_message_format_description)
         system_prompt = system_prompt.replace("{character_agent_message_format_voice_tone}", character_agent_message_format_voice_tone)
         system_prompt = system_prompt.replace("{character_agent_message_format_narrator_comments}", character_agent_message_format_narrator_comments)
 
@@ -311,13 +302,6 @@ class BaseLLMAgent:
 
         logger.debug("Fixed JSON response: {}", content)
         return content
-
-    @staticmethod
-    def format_transcription(confirmed, unconfirmed):
-        text = confirmed
-        if unconfirmed:
-            text += f" ({unconfirmed})"
-        return text.strip()
 
     def _extra_context_to_text(self, context):
         # Override this in child class

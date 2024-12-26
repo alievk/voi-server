@@ -97,15 +97,10 @@ class Conversation:
         except Exception as e:
             self.emit_error(e)
 
-    def _create_message_from_transcription(self, transcription):
-        confirmed = transcription["confirmed_text"]
-        unconfirmed = transcription["unconfirmed_text"]
-
-        text = BaseLLMAgent.format_transcription(confirmed, unconfirmed)
-        
+    def _create_message_from_transcription(self, transcription):        
         return {
             "role": "user",
-            "content": text,
+            "content": "..." if not transcription["confirmed_text"] else transcription["confirmed_text"],
             "time": datetime.now()
         }
 
