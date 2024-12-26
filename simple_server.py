@@ -154,7 +154,7 @@ async def handle_conversation(websocket):
     logger.info("Initializing audio input stream")
     audio_input_stream = AudioInputStream(
         handle_input_audio,
-        output_chunk_size_ms=1000,
+        output_chunk_size_ms=500,
         input_sample_rate=16000, # client sends 16000
         output_sample_rate=asr.sample_rate,
         input_format="pcm16"

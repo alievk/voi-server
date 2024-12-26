@@ -3,7 +3,7 @@ from datetime import datetime
 from loguru import logger
 
 from llm import BaseLLMAgent
-from recognition import OnlineASR
+from recognition import Word, AudioBuffer, OnlineASR
 
 
 class Conversation:
@@ -16,6 +16,7 @@ class Conversation:
         error_cb=None
     ):
         self.asr = asr
+        self.user_audio_buffer = AudioBuffer(min_duration=0.1, max_duration=60)
         self.voice_generator = voice_generator
         self.character_agent = character_agent
         self.conversation_context = conversation_context
@@ -32,7 +33,18 @@ class Conversation:
     async def handle_input_audio(self, audio_chunk):
         """ audio_chunk is f32le """
         end_of_audio = audio_chunk is None
-        asr_result = self.asr.process_chunk(audio_chunk, finalize=end_of_audio)
+
+        if not end_of_audio:
+            asr_result = self.asr.process_chunk(audio_chunk)
+            self.user_audio_buffer.push(audio_chunk)
+        else:
+            words = self.asr.asr.transcribe(self.user_audio_buffer.buffer)
+            asr_result = {
+                "confirmed_text": Word.to_text(words),
+                "unconfirmed_text": ""
+            }
+            self.user_audio_buffer.clear()
+            self.asr.reset()
 
         if asr_result and (asr_result["confirmed_text"] or asr_result["unconfirmed_text"]):
             message = self._create_message_from_transcription(asr_result)
