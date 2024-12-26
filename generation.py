@@ -13,6 +13,7 @@ import numpy as np
 from TTS.tts.configs.xtts_config import XttsConfig
 from TTS.tts.models.xtts import Xtts
 
+from audio import FakeAudioStream
 from text import split_text_into_speech_segments
 
 
@@ -283,13 +284,13 @@ class AsyncVoiceGenerator:
             text, id = item["text"], item["id"]
 
             if text.startswith("file:"):
-                audio_chunk, sr = librosa.load(text[5:], sr=None)
-                duration = len(audio_chunk) / sr
-                # TODO: need to split the file into chunks and send them to the callback
-                asyncio.run_coroutine_threadsafe(
-                    self.generated_audio_cb(audio_chunk=audio_chunk, speech_id=id), 
-                    self._event_loop
-                )
+                stream = FakeAudioStream(text[5:], chunk_length=0.1, sr=self.sample_rate)
+                duration = stream.duration
+                for chunk, _ in stream:
+                    asyncio.run_coroutine_threadsafe(
+                        self.generated_audio_cb(audio_chunk=chunk, speech_id=id), 
+                        self._event_loop
+                    )
             else:
                 duration = 0.0
                 for chunk in self.voice_generator.generate(text, streaming=True):
