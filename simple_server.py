@@ -74,18 +74,21 @@ class Conversation:
     async def _maybe_respond_async(self):
         try:
             need_response = self.conversation_context.messages and self.conversation_context.messages[-1]["role"] == "user"
-            if need_response:
-                self.conversation_context.process_interrupted_messages()
-                response = self.character_agent.completion(self.conversation_context)
+            if not need_response:
+                logger.debug("No need to respond")
+                return
 
-                message = {
-                    "role": "assistant",
-                    "content": response,
-                    "time": datetime.now()
-                }
-                new_message = self.conversation_context.add_message(message)
+            self.conversation_context.process_interrupted_messages()
+            response = self.character_agent.completion(self.conversation_context)
 
-                self._generate_voice(new_message)
+            message = {
+                "role": "assistant",
+                "content": response,
+                "time": datetime.now()
+            }
+            new_message = self.conversation_context.add_message(message)
+
+            self._generate_voice(new_message)
         except Exception as e:
             self.emit_error(e)
             raise e
