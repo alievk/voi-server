@@ -9,6 +9,7 @@ black
 scipy
 websockets
 loguru
+PyJWT
 
 ffmpeg
 librosa

@@ -4,6 +4,8 @@ from datetime import datetime
 import signal
 import os
 from threading import Lock
+import jwt
+from dotenv import load_dotenv
 
 import torch
 import websockets
@@ -14,6 +16,11 @@ from generation import MultiVoiceGenerator, DummyVoiceGenerator, AsyncVoiceGener
 from audio import AudioOutputStream, AudioInputStream, WavSaver, convert_f32le_to_s16le
 from llm import get_agent_config, stringify_content, ConversationContext, BaseLLMAgent, CharacterLLMAgent, CharacterEchoAgent
 from conversation import Conversation
+
+load_dotenv()
+TOKEN_SECRET_KEY = os.getenv('TOKEN_SECRET_KEY')
+if not TOKEN_SECRET_KEY:
+    raise ValueError("TOKEN_SECRET_KEY environment variable is required")
 
 os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
 torch.backends.cudnn.benchmark = False
@@ -38,15 +45,42 @@ async def send_error(websocket, error_message):
         logger.error(f"Error sending error message: {e}")
 
 
+def validate_token(websocket):
+    query_string = str(websocket.request.path).split('?')[-1]
+    params = dict(param.split('=') for param in query_string.split('&'))
+    token = params.get('token')
+    if not token:
+        raise ValueError("Token is required")
+
+    try:
+        decoded_jwt = jwt.decode(token, TOKEN_SECRET_KEY, algorithms=['HS256'])
+        if decoded_jwt['expire'] < datetime.now().isoformat():
+            raise ValueError("Token expired")
+    except jwt.InvalidTokenError as e:
+        raise ValueError("Invalid token")
+
+    return decoded_jwt
+
+
 async def handle_connection(websocket):
     try:
-        await handle_conversation(websocket)
+        token_data = validate_token(websocket)
+    except Exception as e:
+        e = f"Token validation error: {e}"
+        logger.error(e)
+        await send_error(websocket, e)
+        return
+
+    try:
+        await start_conversation(websocket, token_data)
     except Exception as e:
         await send_error(websocket, f"Error in handle_connection: {e}")
 
 
-async def handle_conversation(websocket):
-    log_dir = f"logs/conversations/{get_timestamp()}"
+async def start_conversation(websocket, token_data):
+    app_id = token_data["app"]
+
+    log_dir = f"logs/conversations/{app_id}/{get_timestamp()}"
     logger.add(f"{log_dir}/server.log", rotation="100 MB")
 
     logger.info("New connection is started")
