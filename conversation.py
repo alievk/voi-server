@@ -15,7 +15,8 @@ class Conversation:
         conversation_context,
         error_cb=None
     ):
-        self.asr = asr
+        self.online_asr = asr
+        self.offline_asr = asr.asr
         self.user_audio_buffer = AudioBuffer(min_duration=0.1, max_duration=60)
         self.voice_generator = voice_generator
         self.character_agent = character_agent
@@ -34,17 +35,21 @@ class Conversation:
         """ audio_chunk is f32le """
         end_of_audio = audio_chunk is None
 
-        if not end_of_audio:
-            asr_result = self.asr.process_chunk(audio_chunk)
-            self.user_audio_buffer.push(audio_chunk)
+        if end_of_audio:
+            self.online_asr.reset()
+
+            if self.user_audio_buffer.empty():
+                asr_result = None
+            else:
+                words = self.offline_asr.transcribe(self.user_audio_buffer.buffer)
+                asr_result = {
+                    "confirmed_text": Word.to_text(words),
+                    "unconfirmed_text": ""
+                }
+                self.user_audio_buffer.clear()
         else:
-            words = self.asr.asr.transcribe(self.user_audio_buffer.buffer)
-            asr_result = {
-                "confirmed_text": Word.to_text(words),
-                "unconfirmed_text": ""
-            }
-            self.user_audio_buffer.clear()
-            self.asr.reset()
+            asr_result = self.online_asr.process_chunk(audio_chunk)
+            self.user_audio_buffer.push(audio_chunk)
 
         if asr_result and (asr_result["confirmed_text"] or asr_result["unconfirmed_text"]):
             message = self._create_message_from_transcription(asr_result)

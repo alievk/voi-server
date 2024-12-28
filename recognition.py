@@ -64,6 +64,9 @@ class AudioBuffer:
         self.buffer = self.buffer[ff_size:]
         self.offset += ff
 
+    def empty(self):
+        return len(self.buffer) == 0
+
 class Word:
     def __init__(self, word, start, end, sep=""):
         self.word = word
