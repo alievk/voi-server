@@ -5,7 +5,6 @@ import signal
 import os
 from threading import Lock
 import jwt
-from dotenv import load_dotenv
 from fastapi import FastAPI, WebSocket, HTTPException, Security, Depends
 import uvicorn
 from loguru import logger
@@ -15,8 +14,8 @@ import torch
 
 from recognition import OnlineASR
 from generation import MultiVoiceGenerator, DummyVoiceGenerator, AsyncVoiceGenerator
-from audio import AudioOutputStream, AudioInputStream, WavSaver, convert_f32le_to_s16le
-from llm import get_agent_config, stringify_content, ConversationContext, BaseLLMAgent, CharacterLLMAgent, CharacterEchoAgent
+from audio import AudioInputStream, WavSaver, convert_f32le_to_s16le
+from llm import get_agent_config, stringify_content, ConversationContext, CharacterLLMAgent, CharacterEchoAgent
 from conversation import Conversation
 from token_generator import generate_token, TOKEN_SECRET_KEY
 
