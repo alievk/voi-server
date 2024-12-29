@@ -80,7 +80,7 @@ class WavGroupSaver:
         if filename is None:
             for wav_file in self.wav_files.values():
                 wav_file.close()
-        else:
+        elif filename in self.wav_files:
             self.wav_files[filename].close()
             del self.wav_files[filename]
 
