@@ -15,7 +15,7 @@ import torch
 from recognition import OnlineASR
 from generation import MultiVoiceGenerator, DummyVoiceGenerator, AsyncVoiceGenerator
 from audio import AudioInputStream, WavSaver, convert_f32le_to_s16le
-from llm import get_agent_config, stringify_content, ConversationContext, CharacterLLMAgent, CharacterEchoAgent
+from llm import get_agent_config, stringify_content, ConversationContext, BaseLLMAgent, CharacterLLMAgent, CharacterEchoAgent
 from conversation import Conversation
 from token_generator import generate_token, TOKEN_SECRET_KEY
 
@@ -145,10 +145,36 @@ async def start_conversation(websocket, token_data):
         except Exception as e:
             error_msg = f"Init message error: {str(e)}"
             logger.error(error_msg)
-            await send_error(error_msg)
+            await send_error(websocket, error_msg)
             return None
 
         return agent_config
+
+    async def invoke_llm(message_data):
+        try:
+            if not "model" in message_data:
+                raise ValueError("Missing required field 'model'")
+            if not "prompt" in message_data:
+                raise ValueError("Missing required field 'prompt'")
+            if not "messages" in message_data:
+                raise ValueError("Missing required field 'messages'")
+
+            logger.debug(f"Invoking LLM with message: {message_data}")
+            agent = BaseLLMAgent(
+                model_name=message_data["model"],
+                system_prompt=message_data["prompt"]
+            )
+            context = ConversationContext(messages=message_data["messages"])
+            llm_response = agent.completion(context)
+            message = {
+                "type": "llm_response",
+                "content": llm_response
+            }
+            await websocket.send_bytes(serialize_message(message))
+        except Exception as e:
+            error = f"Error invoking LLM: {e}"
+            logger.error(error)
+            await send_error(websocket, error)
 
     logger.info("Waiting for init message")
     agent_config = await get_validated_init_message()
@@ -251,14 +277,16 @@ async def start_conversation(websocket, token_data):
                     conversation.on_user_interrupt(
                         speech_id=int(message_data["speech_id"]), 
                         interrupted_at=message_data["interrupted_at"])
+                elif message_type == "invoke_llm":
+                    asyncio.run_coroutine_threadsafe(invoke_llm(message_data), asyncio.get_running_loop())
                 else:
                     e = f"Message type {message_type} is not supported"
                     logger.warning(e)
-                    await send_error(e)
+                    await send_error(websocket, e)
             except Exception as e:
-                e = f"Error processing message {message}: {e}"
-                logger.warning(e)
-                await send_error(e)
+                e = f"Error processing client message: {e}. Message: {message}"
+                logger.error(e)
+                await send_error(websocket, e)
 
     logger.info("Cleaning up resources")
     voice_generator.stop()

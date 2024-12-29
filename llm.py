@@ -65,11 +65,25 @@ def model_supports_json_output(model_name):
 
 
 class ConversationContext:
-    def __init__(self, context_changed_cb=None):
-        self.messages = []
+    def __init__(self, messages=None, context_changed_cb=None):
+        self.messages = messages or []
+        self._check_messages(self.messages)
         self.lock = threading.Lock()
         self.context_changed_cb = context_changed_cb
         self._event_loop = asyncio.get_event_loop()
+
+    def _check_messages(self, messages):
+        if not messages:
+            return
+
+        if not isinstance(messages, list):
+            raise ValueError("Messages must be a list")
+        if not all(isinstance(msg, dict) for msg in messages):
+            raise ValueError("Messages must be a list of dictionaries")
+        if "role" not in messages[0]:
+            raise ValueError("Messages must be a list of dictionaries with 'role' field")
+        if "content" not in messages[0]:
+            raise ValueError("Messages must be a list of dictionaries with 'content' field")
 
     def _handle_context_changed(self):
         if self.context_changed_cb:
