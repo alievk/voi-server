@@ -64,6 +64,27 @@ class WavSaver:
             self.wav_file.close()
 
 
+class WavGroupSaver:
+    def __init__(self, dirname, **wav_kwargs):
+        self.dirname = dirname
+        self.wav_files = {}
+        self.wav_kwargs = wav_kwargs
+        os.makedirs(dirname, exist_ok=True)
+
+    def write(self, chunk, filename):
+        if filename not in self.wav_files:
+            self.wav_files[filename] = WavSaver(os.path.join(self.dirname, filename), **self.wav_kwargs)
+        self.wav_files[filename].write(chunk)
+
+    def close(self, filename=None):
+        if filename is None:
+            for wav_file in self.wav_files.values():
+                wav_file.close()
+        else:
+            self.wav_files[filename].close()
+            del self.wav_files[filename]
+
+
 class FakeAudioStream:
     def __init__(self, filename, chunk_length=0.1, duration=None, sr=None):
         """

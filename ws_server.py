@@ -14,7 +14,7 @@ import torch
 
 from recognition import OnlineASR
 from generation import MultiVoiceGenerator, DummyVoiceGenerator, AsyncVoiceGenerator
-from audio import AudioInputStream, WavSaver, convert_f32le_to_s16le
+from audio import AudioInputStream, WavGroupSaver, convert_f32le_to_s16le
 from llm import get_agent_config, stringify_content, ConversationContext, BaseLLMAgent, CharacterLLMAgent, CharacterEchoAgent
 from conversation import Conversation
 from token_generator import generate_token, TOKEN_SECRET_KEY
@@ -76,6 +76,8 @@ async def handle_connection(websocket):
 
 async def start_conversation(websocket, token_data):
     app_id = token_data["app"]
+    user_speech_counter = 0
+    assistant_speech_counter = 0
 
     log_dir = f"logs/conversations/{app_id}/{get_timestamp()}"
     logger.add(f"{log_dir}/server.log", rotation="100 MB")
@@ -91,9 +93,13 @@ async def start_conversation(websocket, token_data):
     @logger.catch(reraise=True)
     async def handle_input_audio(audio_chunk):
         # audio_chunk is f32le
+        nonlocal user_speech_counter
         await conversation.handle_input_audio(audio_chunk)
-        if audio_chunk is not None:
-            audio_input_saver.write(audio_chunk)
+        if audio_chunk is None:
+            user_audio_saver.close(f"user_{user_speech_counter}.wav")
+            user_speech_counter += 1
+        else:
+            user_audio_saver.write(audio_chunk, f"user_{user_speech_counter}.wav")
 
     @logger.catch(reraise=True)
     async def handle_context_changed(context):
@@ -116,8 +122,11 @@ async def start_conversation(websocket, token_data):
     @logger.catch(reraise=True)
     async def handle_generated_audio(audio_chunk, speech_id, duration=None):
         # audio_chunk is f32le
+        nonlocal assistant_speech_counter
         if audio_chunk is None: # end of audio
             conversation.on_assistant_audio_end(speech_id, duration)
+            assistant_audio_saver.close(f"assistant_{assistant_speech_counter}.wav")
+            assistant_speech_counter += 1
         else:
             metadata = {
                 "type": "audio",
@@ -129,7 +138,7 @@ async def start_conversation(websocket, token_data):
             except Exception as e:
                 logger.error(f"Error sending audio chunk: {e}")
 
-            audio_output_saver.write(audio_chunk) # TODO: once per 1Mb it flushes buffer (blocking)
+            assistant_audio_saver.write(audio_chunk, f"assistant_{assistant_speech_counter}.wav") # TODO: once per 1Mb it flushes buffer (blocking)
 
     async def get_validated_init_message():
         try:
@@ -230,15 +239,13 @@ async def start_conversation(websocket, token_data):
         error_cb=conversation_error_handler
     )
 
-    logger.info("Initializing audio input saver")
-    audio_input_saver = WavSaver(
-        f"{log_dir}/incoming.wav", 
+    logger.info("Initializing audio saver")
+    user_audio_saver = WavGroupSaver(
+        f"{log_dir}/audio", 
         sample_rate=audio_input_stream.output_sample_rate
     )
-
-    logger.info("Initializing audio output saver")
-    audio_output_saver = WavSaver(
-        f"{log_dir}/outgoing.wav", 
+    assistant_audio_saver = WavGroupSaver(
+        f"{log_dir}/audio", 
         sample_rate=voice_generator.sample_rate
     )
 
@@ -291,8 +298,8 @@ async def start_conversation(websocket, token_data):
     logger.info("Cleaning up resources")
     voice_generator.stop()
     audio_input_stream.stop()
-    audio_input_saver.close()
-    audio_output_saver.close()
+    user_audio_saver.close()
+    assistant_audio_saver.close()
 
     with cuda_lock:
         torch.cuda.empty_cache()
