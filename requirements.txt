@@ -10,6 +10,8 @@ scipy
 websockets
 loguru
 PyJWT
+fastapi
+uvicorn
 
 ffmpeg
 librosa

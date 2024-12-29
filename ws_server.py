@@ -6,21 +6,19 @@ import os
 from threading import Lock
 import jwt
 from dotenv import load_dotenv
+from fastapi import FastAPI, WebSocket, HTTPException, Security, Depends
+import uvicorn
+from loguru import logger
+from fastapi.security import APIKeyHeader
 
 import torch
-import websockets
-from loguru import logger
 
 from recognition import OnlineASR
 from generation import MultiVoiceGenerator, DummyVoiceGenerator, AsyncVoiceGenerator
 from audio import AudioOutputStream, AudioInputStream, WavSaver, convert_f32le_to_s16le
 from llm import get_agent_config, stringify_content, ConversationContext, BaseLLMAgent, CharacterLLMAgent, CharacterEchoAgent
 from conversation import Conversation
-
-load_dotenv()
-TOKEN_SECRET_KEY = os.getenv('TOKEN_SECRET_KEY')
-if not TOKEN_SECRET_KEY:
-    raise ValueError("TOKEN_SECRET_KEY environment variable is required")
+from token_generator import generate_token, TOKEN_SECRET_KEY
 
 os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
 torch.backends.cudnn.benchmark = False
@@ -40,13 +38,13 @@ def serialize_message(metadata, blob=None):
 
 async def send_error(websocket, error_message):
     try:
-        await websocket.send(serialize_message({"type": "error", "error": error_message}))
+        await websocket.send_bytes(serialize_message({"type": "error", "error": error_message}))
     except Exception as e:
         logger.error(f"Error sending error message: {e}")
 
 
 def validate_token(websocket):
-    query_string = str(websocket.request.path).split('?')[-1]
+    query_string = websocket.scope['query_string'].decode('utf-8').split('?')[-1]
     params = dict(param.split('=') for param in query_string.split('&'))
     token = params.get('token')
     if not token:
@@ -111,7 +109,7 @@ async def start_conversation(websocket, token_data):
             }
             logger.info("Sending message: {}", data)
             try:
-                await websocket.send(serialize_message(data))
+                await websocket.send_bytes(serialize_message(data))
                 context.update_message(msg["id"], handled=True)
             except Exception as e:
                 logger.error(f"Error sending message: {e}")
@@ -128,7 +126,7 @@ async def start_conversation(websocket, token_data):
             }
             try:
                 s16le_chunk = convert_f32le_to_s16le(audio_chunk)
-                await websocket.send(serialize_message(metadata, s16le_chunk))
+                await websocket.send_bytes(serialize_message(metadata, s16le_chunk))
             except Exception as e:
                 logger.error(f"Error sending audio chunk: {e}")
 
@@ -136,8 +134,7 @@ async def start_conversation(websocket, token_data):
 
     async def get_validated_init_message():
         try:
-            data = await websocket.recv()
-            init_message = json.loads(data)
+            init_message = await websocket.receive_json()
             logger.info("Received init message: {}", init_message)
 
             if "agent_name" not in init_message:
@@ -146,19 +143,13 @@ async def start_conversation(websocket, token_data):
             agent_config = get_agent_config(init_message["agent_name"])
             if not agent_config:
                 raise KeyError(f"Agent '{init_message['agent_name']}' not found")
-
-            return agent_config
-
-        except (json.JSONDecodeError, ValueError, KeyError) as e:
+        except Exception as e:
             error_msg = f"Init message error: {str(e)}"
             logger.error(error_msg)
             await send_error(error_msg)
             return None
-        except Exception as e:
-            error_msg = f"Unexpected error: {str(e)}"
-            logger.error(error_msg)
-            await send_error(error_msg)
-            return None
+
+        return agent_config
 
     logger.info("Waiting for init message")
     agent_config = await get_validated_init_message()
@@ -226,56 +217,58 @@ async def start_conversation(websocket, token_data):
         sample_rate=voice_generator.sample_rate
     )
 
-    await websocket.send(serialize_message({"type": "init_done"}))
+    await websocket.send_bytes(serialize_message({"type": "init_done"}))
 
     conversation.greeting()
 
     logger.info("Entering main loop")
-    try:
-        async for message in websocket:
-            if isinstance(message, bytes):
-                logger.debug(f"Received audio chunk: {len(message)} bytes")
-                if not audio_input_stream.is_running():
+    while True:
+        try:
+            message = await websocket.receive()
+        except RuntimeError as e:
+            logger.error(f"Error receiving message: {e}")
+            break
+
+        if message["type"] == "websocket.disconnect":
+            logger.info(f"WebSocket disconnected with code {message.get('code')}")
+            break
+        
+        if "bytes" in message:
+            if not audio_input_stream.is_running():
+                audio_input_stream.start()
+            audio_input_stream.put(message["bytes"])
+        else:
+            try:
+                message_data = json.loads(message["text"])
+                message_type = message_data["type"]
+                logger.debug(f"Received message: {message_data}")
+                if message_type == "start_recording":
                     audio_input_stream.start()
-                audio_input_stream.put(message)
-            else:
-                try:
-                    message_data = json.loads(message)
-                    message_type = message_data["type"]
-                    if message_type == "start_recording":
-                        logger.info("Received start_recording message")
-                        audio_input_stream.start()
-                    elif message_type in ["create_response", "stop_recording"]:
-                        logger.info("Received stop_recording message")
-                        audio_input_stream.stop()
-                    elif message_type == "manual_text":
-                        logger.info("Received manual_text message")
-                        conversation.on_manual_text(message_data["content"])
-                    elif message_type == "interrupt":
-                        logger.info("Received interrupt message")
-                        conversation.on_user_interrupt(
-                            speech_id=int(message_data["speech_id"]), 
-                            interrupted_at=message_data["interrupted_at"])
-                    else:
-                        e = f"Received unexpected type: {message_type}"
-                        logger.warning(e)
-                        await send_error(e)
-                except Exception as e:
-                    e = f"Error processing message {message}: {e}"
+                elif message_type in ["create_response", "stop_recording"]:
+                    audio_input_stream.stop()
+                elif message_type == "manual_text":
+                    conversation.on_manual_text(message_data["content"])
+                elif message_type == "interrupt":
+                    conversation.on_user_interrupt(
+                        speech_id=int(message_data["speech_id"]), 
+                        interrupted_at=message_data["interrupted_at"])
+                else:
+                    e = f"Message type {message_type} is not supported"
                     logger.warning(e)
                     await send_error(e)
-        logger.info("WebSocket connection closed, checking timeout")
-    except websockets.exceptions.ConnectionClosed:
-        logger.info("WebSocket connection closed unexpectedly")
-    finally:
-        logger.info("Cleaning up resources")
-        voice_generator.stop()
-        audio_input_stream.stop()
-        audio_input_saver.close()
-        audio_output_saver.close()
+            except Exception as e:
+                e = f"Error processing message {message}: {e}"
+                logger.warning(e)
+                await send_error(e)
 
-        with cuda_lock:
-            torch.cuda.empty_cache()
+    logger.info("Cleaning up resources")
+    voice_generator.stop()
+    audio_input_stream.stop()
+    audio_input_saver.close()
+    audio_output_saver.close()
+
+    with cuda_lock:
+        torch.cuda.empty_cache()
         
     logger.info("Connection is done")
 
@@ -292,6 +285,37 @@ async def shutdown(signal, loop):
     loop.stop()
 
 
+app = FastAPI()
+api_key_header = APIKeyHeader(name="API-Key")
+
+@app.get("/")
+async def root():
+    return {"status": "running"}
+
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket):
+    await websocket.accept()
+    await handle_connection(websocket)
+
+async def verify_api_key(api_key: str = Security(api_key_header)):
+    if api_key != os.getenv("API_KEY"):
+        raise HTTPException(
+            status_code=403,
+            detail="Invalid API key"
+        )
+    return api_key
+
+@app.post("/integrations/{app_id}")
+async def create_integration_token(
+    app_id: str,
+    api_key: str = Depends(verify_api_key)
+):
+    try:
+        token = generate_token(TOKEN_SECRET_KEY, app_id)
+        return {"token": token}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 async def main():
     logger.add(f"logs/server/server-{get_timestamp()}.log", rotation="100 MB")
 
@@ -302,15 +326,13 @@ async def main():
             s, lambda s=s: asyncio.create_task(shutdown(s, loop))
         )
 
-    server = await websockets.serve(
-        handle_connection,
-        "0.0.0.0",
-        8765,
-    )
-    logger.info("WebSocket server started on wss://0.0.0.0:8765")
-
+    config = uvicorn.Config(app, host="0.0.0.0", port=8765)
+    server = uvicorn.Server(config)
+    
+    logger.info("Server started on http://0.0.0.0:8765")
+    
     try:
-        await server.wait_closed()
+        await server.serve()
     except asyncio.CancelledError:
         logger.info("Server is shutting down...")
     finally:
