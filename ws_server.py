@@ -245,7 +245,12 @@ async def start_conversation(websocket, token_data):
         sample_rate=voice_generator.sample_rate
     )
 
-    await websocket.send_bytes(serialize_message({"type": "init_done"}))
+    await websocket.send_bytes(
+        serialize_message({
+            "type": "init_done",
+            "agent_name": init_message["agent_name"]
+        })
+    )
 
     conversation.greeting()
 
