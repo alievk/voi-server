@@ -71,7 +71,8 @@ async def handle_connection(websocket):
     try:
         await start_conversation(websocket, token_data)
     except Exception as e:
-        await send_error(websocket, f"Error in handle_connection: {e}")
+        await send_error(websocket, f"Error in start_conversation: {repr(e)}")
+        raise e
 
 
 async def start_conversation(websocket, token_data):
@@ -141,23 +142,16 @@ async def start_conversation(websocket, token_data):
             assistant_audio_saver.write(audio_chunk, f"assistant_{assistant_speech_counter}.wav") # TODO: once per 1Mb it flushes buffer (blocking)
 
     async def get_validated_init_message():
-        try:
-            init_message = await websocket.receive_json()
-            logger.info("Received init message: {}", init_message)
+        init_message = await websocket.receive_json()
+        logger.info("Received init message: {}", init_message)
 
-            if "agent_name" not in init_message:
-                raise ValueError("Missing required field 'agent_name'")
+        if init_message["type"] != "init":
+            raise ValueError("Invalid message type")
 
-            agent_config = get_agent_config(init_message["agent_name"])
-            if not agent_config:
-                raise KeyError(f"Agent '{init_message['agent_name']}' not found")
-        except Exception as e:
-            error_msg = f"Init message error: {str(e)}"
-            logger.error(error_msg)
-            await send_error(websocket, error_msg)
-            return None
+        if "agent_name" not in init_message:
+            raise ValueError("Missing required field 'agent_name'")
 
-        return agent_config
+        return init_message
 
     async def invoke_llm(message_data):
         try:
@@ -186,14 +180,16 @@ async def start_conversation(websocket, token_data):
             await send_error(websocket, error)
 
     logger.info("Waiting for init message")
-    agent_config = await get_validated_init_message()
-    if not agent_config:
+    init_message = await get_validated_init_message()
+    if not init_message:
         return
 
     logger.info("Initializing speech recognition")
     asr = OnlineASR(
         cached=True
     )
+
+    agent_config = get_agent_config(init_message["agent_name"])
 
     logger.info("Initializing voice generation")
     if "voices" not in agent_config:

@@ -170,10 +170,7 @@ def get_agent_config(agent_name):
     with open(os.path.join(os.path.dirname(__file__), "agents.json"), "r") as f:
         config = json.load(f)
 
-    agent_config = config.get(agent_name)
-    if agent_config is None:
-        return None
-
+    agent_config = config[agent_name]
     for key, value in agent_config.items():
         if key.endswith("_agent"):
             agent_config[key] = get_agent_config(value)
