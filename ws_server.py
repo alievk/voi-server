@@ -212,7 +212,7 @@ async def start_conversation(websocket, token_data):
         output_chunk_size_ms=500,
         input_sample_rate=16000, # client sends 16000
         output_sample_rate=asr.sample_rate,
-        input_format="pcm16"
+        input_format=init_message.get("input_audio_format", "pcm16")
     )
     audio_input_stream.start()
 
