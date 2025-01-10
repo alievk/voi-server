@@ -142,14 +142,22 @@ async def start_conversation(websocket, token_data):
             assistant_audio_saver.write(audio_chunk, f"assistant_{assistant_speech_counter}.wav") # TODO: once per 1Mb it flushes buffer (blocking)
 
     async def get_validated_init_message():
+        known_fields = ["type", "agent_name", "stream_asr", "input_audio_format"]
+        required_fields = ["type", "agent_name"]
+
         init_message = await websocket.receive_json()
         logger.info("Received init message: {}", init_message)
 
+        for field in init_message:
+            if field not in known_fields:
+                raise ValueError(f"Unknown field '{field}'")
+
+        for field in required_fields:
+            if field not in init_message:
+                raise ValueError(f"Missing required field '{field}'")
+
         if init_message["type"] != "init":
             raise ValueError("Invalid message type")
-
-        if "agent_name" not in init_message:
-            raise ValueError("Missing required field 'agent_name'")
 
         return init_message
 
