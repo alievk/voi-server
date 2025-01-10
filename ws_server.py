@@ -232,6 +232,7 @@ async def start_conversation(websocket, token_data):
         voice_generator=voice_generator,
         character_agent=character_agent,
         conversation_context=conversation_context,
+        stream_asr=init_message.get("stream_asr", True),
         error_cb=conversation_error_handler
     )
 

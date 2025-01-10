@@ -245,7 +245,7 @@ class OnlineASR:
         self.h_buffer = HypothesisBuffer()
 
     @logger.catch
-    def process_chunk(self, chunk, finalize=False, return_audio=False):
+    def process_chunk(self, chunk, finalize=False, return_audio=False, only_append=False):
         sr = self.sample_rate
         
         if finalize:
@@ -257,6 +257,9 @@ class OnlineASR:
             audio, buffer_offset = self.audio_buffer.push(chunk)
             if audio is None: # buffer is not filled yet
                 return None
+
+        if only_append:
+            return None
 
         buffer_duration = len(audio) / sr
         buffer_end_time = buffer_offset + buffer_duration

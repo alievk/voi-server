@@ -13,6 +13,7 @@ class Conversation:
         voice_generator,
         character_agent,
         conversation_context,
+        stream_asr: bool = True,
         error_cb=None
     ):
         self.online_asr = asr
@@ -21,6 +22,7 @@ class Conversation:
         self.voice_generator = voice_generator
         self.character_agent = character_agent
         self.conversation_context = conversation_context
+        self.stream_asr = stream_asr
         self.error_cb = error_cb
 
         self._event_loop = asyncio.get_event_loop()
@@ -34,22 +36,12 @@ class Conversation:
     async def handle_input_audio(self, audio_chunk):
         """ audio_chunk is f32le """
         end_of_audio = audio_chunk is None
+        only_append = not self.stream_asr
 
         if end_of_audio:
-            self.online_asr.reset()
-
-            if self.user_audio_buffer.empty():
-                asr_result = None
-            else:
-                words = self.offline_asr.transcribe(self.user_audio_buffer.buffer)
-                asr_result = {
-                    "confirmed_text": Word.to_text(words),
-                    "unconfirmed_text": ""
-                }
-                self.user_audio_buffer.clear()
+            asr_result = self.online_asr.process_chunk(audio_chunk, finalize=True)
         else:
-            asr_result = self.online_asr.process_chunk(audio_chunk)
-            self.user_audio_buffer.push(audio_chunk)
+            asr_result = self.online_asr.process_chunk(audio_chunk, only_append=only_append)
 
         if asr_result and (asr_result["confirmed_text"] or asr_result["unconfirmed_text"]):
             message = self._create_message_from_transcription(asr_result)
@@ -114,10 +106,10 @@ class Conversation:
         except Exception as e:
             self.emit_error(e)
 
-    def _create_message_from_transcription(self, transcription):        
+    def _create_message_from_transcription(self, transcription):
         return {
             "role": "user",
-            "content": "..." if not transcription["confirmed_text"] else transcription["confirmed_text"],
+            "content": transcription["confirmed_text"] or transcription["unconfirmed_text"] or "...",
             "time": datetime.now()
         }
 
