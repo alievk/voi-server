@@ -14,7 +14,7 @@ import torch
 
 from recognition import OnlineASR
 from generation import MultiVoiceGenerator, DummyVoiceGenerator, AsyncVoiceGenerator
-from audio import AudioInputStream, WavGroupSaver, convert_f32le_to_s16le
+from audio import AudioInputStream, WavGroupSaver, convert_f32le_to_s16le, convert_s16le_to_ogg
 from llm import get_agent_config, stringify_content, ConversationContext, BaseLLMAgent, CharacterLLMAgent, CharacterEchoAgent
 from conversation import Conversation
 from token_generator import generate_token, TOKEN_SECRET_KEY
@@ -124,26 +124,49 @@ async def start_conversation(websocket, token_data):
     async def handle_generated_audio(audio_chunk, speech_id, duration=None):
         # audio_chunk is f32le
         nonlocal assistant_speech_counter
+        stream_output_audio = init_message.get("stream_output_audio", True)
+        file_id = f"assistant_{assistant_speech_counter}.wav"
+
+        payload = None
         if audio_chunk is None: # end of audio
+            if not stream_output_audio: # send full audio
+                payload = convert_s16le_to_ogg(
+                    assistant_audio_saver.wav_files[file_id].buffer,
+                    sample_rate=voice_generator.sample_rate
+                )
+                # save to file
+                with open(f"audio.ogg", "wb") as f:
+                    f.write(payload)
+
             conversation.on_assistant_audio_end(speech_id, duration)
-            assistant_audio_saver.close(f"assistant_{assistant_speech_counter}.wav")
+            assistant_audio_saver.close(file_id)
             assistant_speech_counter += 1
         else:
+            s16le_chunk = convert_f32le_to_s16le(audio_chunk)
+            if stream_output_audio:
+                payload = s16le_chunk
+
+            assistant_audio_saver.write(audio_chunk, file_id) # TODO: once per 1Mb it flushes buffer (blocking)
+
+        if payload is not None:
             metadata = {
                 "type": "audio",
                 "speech_id": str(speech_id)
             }
-            try:
-                s16le_chunk = convert_f32le_to_s16le(audio_chunk)
-                await websocket.send_bytes(serialize_message(metadata, s16le_chunk))
-            except Exception as e:
-                logger.error(f"Error sending audio chunk: {e}")
-
-            assistant_audio_saver.write(audio_chunk, f"assistant_{assistant_speech_counter}.wav") # TODO: once per 1Mb it flushes buffer (blocking)
+            await websocket.send_bytes(serialize_message(metadata, payload))
 
     async def get_validated_init_message():
-        known_fields = ["type", "agent_name", "stream_asr", "input_audio_format"]
-        required_fields = ["type", "agent_name"]
+        known_fields = [
+            "type", 
+            "agent_name", 
+            "stream_asr", # rename to stream_user_stt
+            "stream_output_audio", 
+            "input_audio_format"
+        ]
+        required_fields = [
+            "type", 
+            "agent_name"
+        ]
 
         init_message = await websocket.receive_json()
         logger.info("Received init message: {}", init_message)

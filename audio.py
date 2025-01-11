@@ -8,6 +8,8 @@ from audiostretchy.stretch import AudioStretch
 import soundfile as sf
 import librosa
 import io
+import torchaudio
+import torch
 
 import numpy as np
 
@@ -20,6 +22,16 @@ def load_audio(fname, sr=None, duration=None):
 
 def convert_s16le_to_f32le(buffer):
     return np.frombuffer(buffer, dtype='<i2').flatten().astype(np.float32) / 32768.0
+
+
+def convert_s16le_to_ogg(buffer, sample_rate):
+    # opus codec always encodes in 48kHz
+    # data = convert_s16le_to_f32le(buffer)
+    # data = torchaudio.functional.resample(torch.from_numpy(data).unsqueeze(0), sample_rate, 48000)
+    data = torch.frombuffer(buffer, dtype=torch.int16).unsqueeze(0)
+    file = io.BytesIO()
+    torchaudio.save(file, data, sample_rate, format="opus")
+    return file.getvalue()
 
 
 def convert_f32le_to_s16le(buffer):
@@ -156,7 +168,7 @@ class AudioInputStream:
             threading.Thread(target=self._audio_callback, name='audio-callback', daemon=True, args=(asyncio.get_event_loop(),))
         ]
 
-        if self.input_format is not "pcm16":
+        if self.input_format != "pcm16":
             self.ffmpeg_process = self._start_ffmpeg_process()
             self.threads.insert(0, threading.Thread(target=self._ffmpeg_in_pipe, name='ffmpeg-in-pipe', daemon=True))
 
