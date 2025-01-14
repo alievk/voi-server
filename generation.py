@@ -205,7 +205,8 @@ class MultiVoiceGenerator:
         segments = split_text_into_speech_segments(text, avg_text_len=100)
         roles = set([s["role"] for s in segments])
         generators = set(self.generators.keys())
-        assert roles <= generators, f"There aren't generators for these roles: {roles - generators}"
+        if roles > generators:
+            logger.warning(f"There aren't generators for these roles: {roles - generators}")
         return segments
 
     def generate(self, text, streaming=False):
@@ -214,13 +215,14 @@ class MultiVoiceGenerator:
         if streaming:
             return itertools.chain.from_iterable(
                 self.generators[segment["role"]].generate(segment["text"], streaming=True)
-                for segment in segments
+                for segment in segments if segment["role"] in self.generators
             )
         else:
             audio_chunks = []
             for segment in segments:
-                chunk = self.generators[segment["role"]].generate(segment["text"], streaming=False)
-                audio_chunks.append(chunk)
+                if segment["role"] in self.generators:
+                    chunk = self.generators[segment["role"]].generate(segment["text"], streaming=False)
+                    audio_chunks.append(chunk)
 
             return np.concatenate(audio_chunks)
 
