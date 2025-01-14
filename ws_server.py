@@ -161,7 +161,8 @@ async def start_conversation(websocket, token_data):
             "agent_name", 
             "stream_asr", # rename to stream_user_stt
             "stream_output_audio", 
-            "input_audio_format"
+            "input_audio_format",
+            "init_greeting"
         ]
         required_fields = [
             "type", 
@@ -284,7 +285,8 @@ async def start_conversation(websocket, token_data):
         })
     )
 
-    conversation.greeting()
+    if init_message.get("init_greeting", True):
+        conversation.greeting()
 
     logger.info("Entering main loop")
     while True:
