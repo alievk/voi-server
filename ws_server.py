@@ -111,7 +111,8 @@ async def start_conversation(websocket, token_data):
                 "role": msg["role"],
                 "content": stringify_content(msg["content"]),
                 "time": msg["time"].strftime("%H:%M:%S"),
-                "id": msg["id"]
+                "id": msg["id"],
+                "from": msg["from"]
             }
             logger.info("Sending message: {}", data)
             try:

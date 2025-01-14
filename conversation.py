@@ -58,7 +58,8 @@ class Conversation:
         message = {
             "role": "user",
             "content": text,
-            "time": datetime.now()
+            "time": datetime.now(),
+            "from": "text"
         }
         self.conversation_context.add_message(message)
         self._maybe_respond()
@@ -79,7 +80,8 @@ class Conversation:
             message = {
                 "role": "assistant",
                 "content": response,
-                "time": datetime.now()
+                "time": datetime.now(),
+                "from": "llm"
             }
             new_message = self.conversation_context.add_message(message)
 
@@ -110,7 +112,8 @@ class Conversation:
         return {
             "role": "user",
             "content": transcription["confirmed_text"] or transcription["unconfirmed_text"] or "...",
-            "time": datetime.now()
+            "time": datetime.now(),
+            "from": "audio"
         }
 
     def on_assistant_audio_end(self, speech_id, duration):
