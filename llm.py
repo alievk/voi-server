@@ -170,6 +170,9 @@ def get_agent_config(agent_name):
     with open(os.path.join(os.path.dirname(__file__), "agents.json"), "r") as f:
         config = json.load(f)
 
+    if agent_name not in config:
+        raise ValueError(f"Agent {agent_name} not found in agents.json")
+
     agent_config = config[agent_name]
     for key, value in agent_config.items():
         if key.endswith("_agent"):
