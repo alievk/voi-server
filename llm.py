@@ -165,20 +165,31 @@ class ConversationContext:
                         msg["handled"] = False
 
 
-@logger.catch(reraise=True)
-def get_agent_config(agent_name):
-    with open(os.path.join(os.path.dirname(__file__), "agents.json"), "r") as f:
-        config = json.load(f)
+class AgentConfigManager:
+    def __init__(self):
+        self._agent_list = self._load_agent_list()
 
-    if agent_name not in config:
-        raise ValueError(f"Agent {agent_name} not found in agents.json")
+    def _load_agent_list(self):
+        with open(os.path.join(os.path.dirname(__file__), "agents.json"), "r") as f:
+            return json.load(f)
 
-    agent_config = config[agent_name]
-    for key, value in agent_config.items():
-        if key.endswith("_agent"):
-            agent_config[key] = get_agent_config(value)
+    def add_agent(self, agent_name, agent_config):
+        self._agent_list[agent_name] = agent_config
 
-    return agent_config
+    def get_config(self, agent_name):
+        if agent_name not in self._agent_list:
+            raise ValueError(f"Agent {agent_name} not found")
+
+        agent_config = self._agent_list[agent_name]
+        # recursively resolve nested agents
+        for key, value in agent_config.items():
+            if key.endswith("_agent"):
+                agent_config[key] = self.get_config(value)
+
+        return agent_config
+
+
+agent_config_manager = AgentConfigManager()
 
 
 class BaseLLMAgent:

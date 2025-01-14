@@ -15,7 +15,7 @@ import torch
 from recognition import OnlineASR
 from generation import MultiVoiceGenerator, DummyVoiceGenerator, AsyncVoiceGenerator
 from audio import AudioInputStream, WavGroupSaver, convert_f32le_to_s16le, convert_s16le_to_ogg
-from llm import get_agent_config, stringify_content, ConversationContext, BaseLLMAgent, CharacterLLMAgent, CharacterEchoAgent
+from llm import agent_config_manager, stringify_content, ConversationContext, BaseLLMAgent, CharacterLLMAgent, CharacterEchoAgent
 from conversation import Conversation
 from token_generator import generate_token, TOKEN_SECRET_KEY
 
@@ -112,7 +112,7 @@ async def start_conversation(websocket, token_data):
                 "content": stringify_content(msg["content"]),
                 "time": msg["time"].strftime("%H:%M:%S"),
                 "id": msg["id"],
-                "from": msg["from"]
+                "from": msg.get("from", "text")
             }
             logger.info("Sending message: {}", data)
             try:
@@ -160,6 +160,7 @@ async def start_conversation(websocket, token_data):
         known_fields = [
             "type", 
             "agent_name", 
+            "agent_config",
             "stream_asr", # rename to stream_user_stt
             "stream_output_audio", 
             "input_audio_format",
@@ -222,7 +223,9 @@ async def start_conversation(websocket, token_data):
         cached=True
     )
 
-    agent_config = get_agent_config(init_message["agent_name"])
+    if init_message.get("agent_config"):
+        agent_config_manager.add_agent(init_message["agent_name"], json.loads(init_message["agent_config"]))
+    agent_config = agent_config_manager.get_config(init_message["agent_name"])
 
     logger.info("Initializing voice generation")
     if "voices" not in agent_config:
