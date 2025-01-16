@@ -130,9 +130,10 @@ async def start_conversation(websocket, token_data):
 
         payload = None
         if audio_chunk is None: # end of audio
-            if not stream_output_audio: # send full audio
+            full_audio = assistant_audio_saver.get_buffer(file_id)
+            if full_audio and not stream_output_audio: # send full audio
                 payload = convert_s16le_to_ogg(
-                    assistant_audio_saver.wav_files[file_id].buffer,
+                    full_audio,
                     sample_rate=voice_generator.sample_rate
                 )
 
@@ -144,9 +145,9 @@ async def start_conversation(websocket, token_data):
             if stream_output_audio:
                 payload = s16le_chunk
 
-            assistant_audio_saver.write(audio_chunk, file_id) # TODO: once per 1Mb it flushes buffer (blocking)
+            assistant_audio_saver.write(audio_chunk, file_id)
 
-        if payload is not None:
+        if payload:
             metadata = {
                 "type": "audio",
                 "speech_id": str(speech_id)

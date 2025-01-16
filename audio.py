@@ -39,7 +39,7 @@ def convert_f32le_to_s16le(buffer):
 
 
 class WavSaver:
-    def __init__(self, filename, channels=1, sample_width=2, sample_rate=16000, buffer_size=1024*1024):
+    def __init__(self, filename, channels=1, sample_width=2, sample_rate=16000, buffer_size=None):
         self.filename = filename
         self.channels = channels
         self.sample_width = sample_width
@@ -55,7 +55,7 @@ class WavSaver:
             chunk = convert_f32le_to_s16le(chunk)
 
         self.buffer += chunk
-        if len(self.buffer) >= self.buffer_size:
+        if self.buffer_size and len(self.buffer) >= self.buffer_size:
             self._flush_buffer()
 
     def _create_wav_file(self):
@@ -87,6 +87,9 @@ class WavGroupSaver:
         if filename not in self.wav_files:
             self.wav_files[filename] = WavSaver(os.path.join(self.dirname, filename), **self.wav_kwargs)
         self.wav_files[filename].write(chunk)
+
+    def get_buffer(self, filename):
+        return self.wav_files[filename].buffer
 
     def close(self, filename=None):
         if filename is None:
