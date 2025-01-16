@@ -43,19 +43,14 @@ character_agent_message_format_narrator_comments = (
 json_parse_error_response = {"text": "Sorry, I was lost in thought. Can you repeat that?", "voice_tone": "neutral"}
 
 
-def stringify_content(content):
-    emoji_map = lambda voice_tone: {
+def voice_tone_emoji(voice_tone):
+    return {
         "neutral": "😐",
         "warm": "😊",
         "erotic": "😍",
         "excited": "😃",
         "sad": "😔"
     }.get(voice_tone, "😐")
-
-    if isinstance(content, dict):
-        return f"{emoji_map(content.get('voice_tone'))} {content['text']}"
-    else:
-        return content
 
 
 def model_supports_json_output(model_name):

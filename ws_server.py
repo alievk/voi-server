@@ -15,7 +15,7 @@ import torch
 from recognition import OnlineASR
 from generation import MultiVoiceGenerator, DummyVoiceGenerator, AsyncVoiceGenerator
 from audio import AudioInputStream, WavGroupSaver, convert_f32le_to_s16le, convert_s16le_to_ogg
-from llm import agent_config_manager, stringify_content, ConversationContext, BaseLLMAgent, CharacterLLMAgent, CharacterEchoAgent
+from llm import agent_config_manager, ConversationContext, BaseLLMAgent, CharacterLLMAgent, CharacterEchoAgent, voice_tone_emoji
 from conversation import Conversation
 from token_generator import generate_token, TOKEN_SECRET_KEY
 
@@ -109,11 +109,16 @@ async def start_conversation(websocket, token_data):
             data = {
                 "type": "message",
                 "role": msg["role"],
-                "content": stringify_content(msg["content"]),
                 "time": msg["time"].strftime("%H:%M:%S"),
                 "id": msg["id"],
                 "from": msg.get("from", "text")
             }
+            if isinstance(msg["content"], dict):
+                data["content"] = msg["content"]["text"]
+                data["sentiment"] = voice_tone_emoji(msg["content"]["voice_tone"])
+            else:
+                data["content"] = msg["content"]
+
             logger.info("Sending message: {}", data)
             try:
                 await websocket.send_bytes(serialize_message(data))
