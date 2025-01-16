@@ -135,9 +135,6 @@ async def start_conversation(websocket, token_data):
                     assistant_audio_saver.wav_files[file_id].buffer,
                     sample_rate=voice_generator.sample_rate
                 )
-                # save to file
-                with open(f"audio.ogg", "wb") as f:
-                    f.write(payload)
 
             conversation.on_assistant_audio_end(speech_id, duration)
             assistant_audio_saver.close(file_id)
