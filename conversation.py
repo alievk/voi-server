@@ -43,7 +43,11 @@ class Conversation:
             if self.stream_user_stt:
                 asr_result = self.online_asr.process_chunk(audio_chunk, finalize=True)
             else:
-                asr_result = self.offline_asr.transcribe(self.user_audio_buffer.buffer)
+                words = self.offline_asr.transcribe(self.user_audio_buffer.buffer)
+                asr_result = {
+                    "confirmed_text": Word.to_text(words),
+                    "unconfirmed_text": "",
+                }
             self.user_audio_buffer.clear()
         else:
             if self.stream_user_stt:
