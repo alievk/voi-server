@@ -35,11 +35,23 @@ def serialize_message(metadata, blob=None):
         return metadata_length + metadata + blob
 
 
-async def send_error(websocket, error_message):
+async def safe_send(websocket, message, fatal=False):
     try:
-        await websocket.send_bytes(serialize_message({"type": "error", "error": error_message}))
-    except Exception as e:
-        logger.error(f"Error sending error message: {e}")
+        if isinstance(message, bytes):
+            await websocket.send_bytes(message)
+        else:
+            await websocket.send_text(message)
+    except RuntimeError as e:
+        if fatal:
+            raise e
+        logger.error(f"Error sending message: {e}")
+
+
+async def send_error(websocket, error_message):
+    await safe_send(websocket, serialize_message({
+        "type": "error", 
+        "error": error_message
+    }))
 
 
 def validate_token(websocket):
@@ -120,11 +132,8 @@ async def start_conversation(websocket, token_data):
                 data["content"] = msg["content"]
 
             logger.info("Sending message: {}", data)
-            try:
-                await websocket.send_bytes(serialize_message(data))
-                context.update_message(msg["id"], handled=True)
-            except Exception as e:
-                logger.error(f"Error sending message: {e}")
+            await safe_send(websocket, serialize_message(data))
+            context.update_message(msg["id"], handled=True)
 
     @logger.catch(reraise=True)
     async def handle_generated_audio(audio_chunk, speech_id, duration=None):
@@ -157,7 +166,7 @@ async def start_conversation(websocket, token_data):
                 "type": "audio",
                 "speech_id": str(speech_id)
             }
-            await websocket.send_bytes(serialize_message(metadata, payload))
+            await safe_send(websocket, serialize_message(metadata, payload))
 
     async def get_validated_init_message():
         known_fields = [
@@ -210,7 +219,7 @@ async def start_conversation(websocket, token_data):
                 "type": "llm_response",
                 "content": llm_response
             }
-            await websocket.send_bytes(serialize_message(message))
+            await safe_send(websocket, serialize_message(message))
         except Exception as e:
             error = f"Error invoking LLM: {e}"
             logger.error(error)
@@ -285,12 +294,10 @@ async def start_conversation(websocket, token_data):
         sample_rate=voice_generator.sample_rate
     )
 
-    await websocket.send_bytes(
-        serialize_message({
-            "type": "init_done",
-            "agent_name": init_message["agent_name"]
-        })
-    )
+    await safe_send(websocket, serialize_message({
+        "type": "init_done",
+        "agent_name": init_message["agent_name"]
+    }), fatal=True)
 
     if init_message.get("init_greeting", True):
         conversation.greeting()
