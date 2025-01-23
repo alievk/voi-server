@@ -172,8 +172,7 @@ class AgentConfigManager:
     def _resolve_nested_agents(self):
         for agent_name, agent_config in self._agent_list.items():
             for key, value in agent_config.items():
-                if key.endswith("_agent"):
-                    assert isinstance(value, str), f"Nested config {key} must be a string"
+                if key.endswith("_agent") and isinstance(value, str):
                     self._agent_list[agent_name][key] = self._agent_list[value]
 
     def add_agent(self, agent_name, agent_config):
