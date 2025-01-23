@@ -13,7 +13,8 @@ class Conversation:
         voice_generator,
         character_agent,
         conversation_context,
-        stream_asr: bool = True,
+        stream_user_stt: bool = True,
+        final_stt_correction: bool = True,
         error_cb=None
     ):
         self.online_asr = asr
@@ -22,7 +23,8 @@ class Conversation:
         self.voice_generator = voice_generator
         self.character_agent = character_agent
         self.conversation_context = conversation_context
-        self.stream_asr = stream_asr
+        self.stream_user_stt = stream_user_stt
+        self.final_stt_correction = final_stt_correction
         self.error_cb = error_cb
 
         self._event_loop = asyncio.get_event_loop()
@@ -36,12 +38,19 @@ class Conversation:
     async def handle_input_audio(self, audio_chunk):
         """ audio_chunk is f32le """
         end_of_audio = audio_chunk is None
-        only_append = not self.stream_asr
 
         if end_of_audio:
-            asr_result = self.online_asr.process_chunk(audio_chunk, finalize=True)
+            if self.stream_user_stt:
+                asr_result = self.online_asr.process_chunk(audio_chunk, finalize=True)
+            else:
+                asr_result = self.offline_asr.transcribe(self.user_audio_buffer.buffer)
+            self.user_audio_buffer.clear()
         else:
-            asr_result = self.online_asr.process_chunk(audio_chunk, only_append=only_append)
+            if self.stream_user_stt:
+                asr_result = self.online_asr.process_chunk(audio_chunk)
+            else:
+                asr_result = None
+            self.user_audio_buffer.push(audio_chunk)
 
         if asr_result and (asr_result["confirmed_text"] or asr_result["unconfirmed_text"]):
             message = self._create_message_from_transcription(asr_result)
