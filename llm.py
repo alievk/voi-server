@@ -163,25 +163,27 @@ class ConversationContext:
 class AgentConfigManager:
     def __init__(self):
         self._agent_list = self._load_agent_list()
+        self._resolve_nested_agents()
 
     def _load_agent_list(self):
         with open(os.path.join(os.path.dirname(__file__), "agents.json"), "r") as f:
             return json.load(f)
 
+    def _resolve_nested_agents(self):
+        for agent_name, agent_config in self._agent_list.items():
+            for key, value in agent_config.items():
+                if key.endswith("_agent"):
+                    assert isinstance(value, str), f"Nested config {key} must be a string"
+                    self._agent_list[agent_name][key] = self._agent_list[value]
+
     def add_agent(self, agent_name, agent_config):
         self._agent_list[agent_name] = agent_config
+        self._resolve_nested_agents()
 
     def get_config(self, agent_name):
         if agent_name not in self._agent_list:
             raise ValueError(f"Agent {agent_name} not found")
-
-        agent_config = self._agent_list[agent_name]
-        # recursively resolve nested agents
-        for key, value in agent_config.items():
-            if key.endswith("_agent"):
-                agent_config[key] = self.get_config(value)
-
-        return agent_config
+        return self._agent_list[agent_name]
 
 
 agent_config_manager = AgentConfigManager()
