@@ -74,6 +74,7 @@ class WavSaver:
         self._flush_buffer()
         if self.wav_file:
             self.wav_file.close()
+        self.wav_file = None
 
 
 class WavGroupSaver:
