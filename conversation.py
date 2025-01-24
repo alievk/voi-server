@@ -38,22 +38,28 @@ class Conversation:
     async def handle_input_audio(self, audio_chunk):
         """ audio_chunk is f32le """
         end_of_audio = audio_chunk is None
+        asr_result = None
 
         if end_of_audio:
             if self.stream_user_stt:
+                # we need to finalize the online asr even if we don't use the result
                 asr_result = self.online_asr.process_chunk(audio_chunk, finalize=True)
-            else:
+
+            if self.final_stt_correction:
+                if asr_result:
+                    logger.debug("Ignoring online asr result and using full audio transcription")
+
                 words = self.offline_asr.transcribe(self.user_audio_buffer.buffer)
                 asr_result = {
                     "confirmed_text": Word.to_text(words),
                     "unconfirmed_text": "",
                 }
+
             self.user_audio_buffer.clear()
         else:
             if self.stream_user_stt:
                 asr_result = self.online_asr.process_chunk(audio_chunk)
-            else:
-                asr_result = None
+
             self.user_audio_buffer.push(audio_chunk)
 
         if asr_result and (asr_result["confirmed_text"] or asr_result["unconfirmed_text"]):
