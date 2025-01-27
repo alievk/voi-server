@@ -173,7 +173,7 @@ async def start_conversation(websocket, token_data):
             "type", 
             "agent_name", 
             "agent_config",
-            "stream_asr", # rename to stream_user_stt
+            "stream_user_stt",
             "final_stt_correction",
             "stream_output_audio", 
             "input_audio_format",
@@ -281,7 +281,7 @@ async def start_conversation(websocket, token_data):
         voice_generator=voice_generator,
         character_agent=character_agent,
         conversation_context=conversation_context,
-        stream_user_stt=init_message.get("stream_asr", True),
+        stream_user_stt=init_message.get("stream_user_stt", True),
         final_stt_correction=init_message.get("final_stt_correction", True),
         error_cb=conversation_error_handler
     )
