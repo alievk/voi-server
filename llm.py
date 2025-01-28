@@ -361,19 +361,23 @@ class CharacterLLMAgent(BaseLLMAgent):
 
     def greeting_message(self):
         greeting = random.choice(self.greetings["choices"])
+        # greeting is a dict like {"content": "...", "file": "..."} or a plain string
         if isinstance(greeting, dict):
-            content = {
-                "text": greeting["content"],
-                "voice_tone": self.greetings.get("voice_tone")
-            }
-            file = greeting["file"]
+            text = greeting["content"]
+            file = greeting.get("file")
+            if file and not os.path.exists(file):
+                logger.warning("Greeting file {} does not exist", file)
+                file = None
         else:
-            content = greeting
+            text = greeting
             file = None
 
         return {
             "role": "assistant",
-            "content": content,
+            "content": {
+                "text": text, 
+                "voice_tone": self.greetings.get("voice_tone")
+            },
             "file": file,
             "time": datetime.now()
         }
