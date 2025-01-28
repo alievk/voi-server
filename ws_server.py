@@ -9,6 +9,7 @@ from fastapi import FastAPI, WebSocket, HTTPException, Security, Depends
 import uvicorn
 from loguru import logger
 from fastapi.security import APIKeyHeader
+from fastapi.middleware.cors import CORSMiddleware
 
 import torch
 
@@ -371,16 +372,17 @@ async def shutdown(signal, loop):
 
 
 app = FastAPI()
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 api_key_header = APIKeyHeader(name="API-Key")
-
-@app.get("/")
-async def root():
-    return {"status": "running"}
-
-@app.websocket("/ws")
-async def websocket_endpoint(websocket: WebSocket):
-    await websocket.accept()
-    await handle_connection(websocket)
+active_connections = 0
 
 async def verify_api_key(api_key: str = Security(api_key_header)):
     if api_key != os.getenv("API_KEY"):
@@ -389,6 +391,26 @@ async def verify_api_key(api_key: str = Security(api_key_header)):
             detail="Invalid API key"
         )
     return api_key
+
+@app.get("/")
+async def root():
+    return {"status": "running"}
+
+@app.get("/metrics")
+async def get_metrics(api_key: str = Depends(verify_api_key)):
+    return {
+        "active_connections": active_connections
+    }
+
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket):
+    global active_connections
+    active_connections += 1
+    await websocket.accept()
+    try:
+        await handle_connection(websocket)
+    finally:
+        active_connections = max(0, active_connections - 1)
 
 @app.post("/integrations/{app_id}")
 async def create_integration_token(
