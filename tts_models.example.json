@@ -17,6 +17,7 @@
         "voice_tone_map": {
             "neutral": "narrator_warm",
             "warm": "narrator_warm",
+            "erotic": "narrator_erotic",
             "excited": "character_excited",
             "sad": "narrator_warm"
         },
