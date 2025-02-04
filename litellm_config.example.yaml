@@ -1,0 +1,33 @@
+model_list:
+  - model_name: gemini-1.5-flash
+    litellm_params:
+      model: openai/gemini-1.5-flash
+      api_key: your_googleapi_key
+      api_base: https://generativelanguage.googleapis.com/v1beta/openai
+  - model_name: claude-3.5-sonnet
+    litellm_params:
+      model: anthropic/claude-3-5-sonnet-20241022
+      api_key: your_anthropic_key
+  - model_name: gpt-3.5
+    litellm_params:
+      model: openai/gpt-3.5-turbo
+      api_key: your_openai_key
+  - model_name: gpt-4o-mini
+    litellm_params:
+      model: openai/gpt-4o-mini
+      api_key: your_openai_key
+  - model_name: meta-llama-3.1-70b-instruct-turbo
+    litellm_params:
+      model: openai/meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo
+      api_key: your_deepinfra_key
+      api_base: https://api.deepinfra.com/v1/openai
+  - model_name: meta-llama-3.1-8b-instruct
+    litellm_params:
+      model: openai/meta-llama/Meta-Llama-3.1-8B-Instruct
+      api_key: your_deepinfra_key
+      api_base: https://api.deepinfra.com/v1/openai
+  - model_name: meta-llama-3.1-70b-instruct-turbo-lepton
+    litellm_params:
+      model: openai/llama3.1-70b
+      api_key: your_lepton_key
+      api_base: https://llama3-1-70b.lepton.run/api/v1/
