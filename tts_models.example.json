@@ -1,0 +1,25 @@
+{
+    "multispeaker_original": {
+        "language": "en",
+        "checkpoint": "./models/xtts_v2/model.pth",
+        "config": "./models/xtts_v2/config.json",
+        "tokenizer": "./models/xtts_v2/vocab.json",
+        "voices": "./models/xtts_v2/speakers_xtts.pth",
+        "avg_text_len": 100
+    },
+    
+    "sasha_fox": {
+        "language": "en",
+        "checkpoint": "./models/sasha_fox/model.pth",
+        "config": "./models/sasha_fox/config.json",
+        "tokenizer": "./models/sasha_fox/vocab.json",
+        "voices": "./models/sasha_fox/voices.pth",
+        "voice_tone_map": {
+            "neutral": "narrator_warm",
+            "warm": "narrator_warm",
+            "excited": "character_excited",
+            "sad": "narrator_warm"
+        },
+        "avg_text_len": 60
+    }
+}
