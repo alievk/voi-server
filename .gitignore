@@ -64,3 +64,9 @@ htmlcov/
 *.csr
 *.der
 *.pfx
+
+# Sensetive files
+agents.json
+tts_models.json
+docker/id_rsa.pub
+docker/jupyter_lab_config.py
