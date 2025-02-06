@@ -70,3 +70,5 @@ agents.json
 tts_models.json
 docker/id_rsa.pub
 docker/jupyter_lab_config.py
+docker/docker-compose.yml
+docker/docker-compose-dev.yml
