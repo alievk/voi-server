@@ -166,7 +166,21 @@ cp tts_models.example.json tts_models.json
 Voi allows changing voice tone of the agent dynamically during the conversation (like neutral or excited), but the pre-trained model coming along with xTTS doesn't allow this. I have a custom pipeline for fine-tuning text-to-speech models on audio datasets and enabling dynamic tone changing, which I'm not open sourcing today. If you need a custom model, please DM me on [X](https://x.com/alievk0).
 
 #### Agents
-TODO
+`agents.json` is where you create your virtual personalities, define their behaviour and voice. `agents.example.json` demonstrates some fun use cases and utility agents like a shallow speech-to-text test and a sub-agent for discarding Llama's "I can't create explicit content"-like responses.
+
+Make a copy of `agents.example.json` and edit it for your needs.
+```
+cp agents.example.json agents.json
+```
+
+Rules:
+- You can write long prompts line-by-line for better readibility.
+- Response examples are given as lists of dicts: `{"user": user_input, "assistant": assistant_response}`
+- `llm_model` should match one of the models defined in the `litellm_config.yaml`. Exception is `echo` agent, which just forwards user audio transcription.
+- `control_agent` is an agent which controls the output of the parent agent. See `control_agent_llama_3.1_70b_instruct_turbo` for example.
+- `model` in `voices:character` should match one of the models in `tts_models.json`.
+- `voice` in `voices:character` should match one of the voices in the `voices` file of that particular TTS model in `tts_models.json`.
+- `voice_tone` in `greetings` should match one of the tones in the `voice_tone_map` dict of that particular TTS model in `tts_models.json`.
 
 #### Run the server
 Ssh into the container and run:
