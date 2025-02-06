@@ -26,29 +26,29 @@ There are two Docker environments to run Voi server, production and development.
 ### Development environment
 
 Get the sources.
-```
+```bash
 git clone https://github.com/alievk/voi-core.git
 cd voi-core
 ```
 
 Copy your `id_rsa.pub` into `docker` folder to be able to ssh directily into the container.
-```
+```bash
 cp ~/.ssh/id_rsa.pub docker/
 ```
 
 Make a copy of `docker/jupyter_lab_config.example.py`. Follow the instructions inside this file if you need a password for Jupyter or leave it as is.
-```
+```bash
 cp docker/jupyter_lab_config.example.py docker/jupyter_lab_config.py
 ```
 
 Make a copy of `docker/docker-compose-dev.example.yml`.
-```
+```bash
 cp docker/docker-compose-dev.example.yml docker/docker-compose-dev.yml
 ```
 In the `docker-compose-dev.yml`, edit the `environment`, `ports` and `volumes` sections as you need.
 
 Build and run the development container.
-```
+```bash
 cd docker
 ./up-dev.sh
 ```
@@ -56,7 +56,7 @@ cd docker
 When the container is created, you will see `voice-agent-core-container-dev` in `docker ps` output, otherwise check `docker-compose logs` for errors. If there were no errors, ssh daemon and Jupyter server will be listening on the ports defined in `docker-compose-dev.yml`.
 
 Connect via ssh into the container from e.g. your laptop:  
-```
+```bash
 ssh user@<host> -p <port>
 ```  
 where `<host>` is the address of your host machine and `port` is the port specified in `docker-compose-dev.yml`. You will see a bash prompt like `user@8846788f5e9c:~$`.
@@ -72,7 +72,7 @@ Host voi_docker_dev
 ```
 
 Then you do just this and get into the container:
-```
+```bash
 ssh voi_docker_dev
 ```
 
@@ -109,22 +109,22 @@ If you are not in the restricted region, you can run LiteLLM server locally on y
 #### Setup
 For the details of setting up LiteLLM, visit [their repo](https://github.com/BerriAI/litellm), but basically you need to follow these steps:
 - Get the code.
-```
+```bash
 git clone https://github.com/BerriAI/litellm
 cd litellm
 ```
 - Add the master key - you can change this after setup.
-```
+```bash
 echo 'LITELLM_MASTER_KEY="sk-1234"' > .env
 source .env
 ```
 - Create models configuration file.
-```
+```bash
 touch litellm_config.yaml
 ```
 Look at [litellm_config.example.yaml](litellm_config.example.yaml) for a reference. The `model` format is `{API format}/{model name}`, where `API format` is `openai`/`anthropic` and `{model name}` is the model name in the provider's format (`gpt-4o-mini` for OpenAI or `meta-llama/Meta-Llama-3.1-8B-Instruct` for DeepInfra). 
 - Start LiteLLM server.
-```
+```bash
 docker-compose up
 ```
 
@@ -135,14 +135,14 @@ My typical workflow is to run the [development environment]() and ssh to the con
 
 #### Environment variables
 Make a copy of `.env.example`.
-```
+```bash
 # Assuming you are in the Voi root
 cp .env.example .env
 ```
 
 - `LITELLM_API_BASE` is the address of your LiteLLM server, like `http://111.1.1.1:4000` of `http://localhost:4000`.
 - `LITELLM_API_KEY` is `LITELLM_MASTER_KEY` from the LiteLLM's `.env` file.
-- `TOKEN_SECRET_KEY` is a secret key for generating [access tokens](#access_tokens) to the websocket endpoint. You should not reveal this key to a client.
+- `TOKEN_SECRET_KEY` is a secret key for generating [access tokens](#access-tokens) to the websocket endpoint. You should not reveal this key to a client.
 - `API_KEY` is the HTTPS API access key. You need to share it with a client.
 
 #### Text-to-speech model
@@ -158,7 +158,7 @@ To test your agents, you can download the pre-trained multi-speaker model from [
 - `speakers_xtts.pth`
 
 Then make a copy of `tts_models.example.json` and fix the paths in `multispeaker_original` so that they point to the model files above.
-```
+```bash
 cp tts_models.example.json tts_models.json
 ```
 
@@ -169,7 +169,7 @@ Voi allows changing voice tone of the agent dynamically during the conversation 
 `agents.json` is where you create your virtual personalities, define their behaviour and voice. `agents.example.json` demonstrates some fun use cases and utility agents like a shallow speech-to-text test and a sub-agent for discarding Llama's "I can't create explicit content"-like responses.
 
 Make a copy of `agents.example.json` and edit it for your needs.
-```
+```bash
 cp agents.example.json agents.json
 ```
 
@@ -184,11 +184,28 @@ Rules:
 
 #### Run the server
 Ssh into the container and run:
-```
+```bash
 python3 ws_server.py
 ```
 
 Note that the first time the client connects to an agent it may take some time to load the text-to-speech models.
 
 ### Access tokens
-TODO
+Clients and agents communicate via the websocket. A client must receive it's personal token to access the websocket endpoint. This can be made in two ways:
+1. Through the API:
+```bash
+curl -I -X POST "https://your_host_address:port/integrations/your_app" \
+-H "API-Key: your_api_key"
+```
+where 
+- `your_host_address:port` is the address of the host running Voi server and `port` is the port where the server is listening.
+- `your_app` is the name of your app, like `relationships_coach`.
+- `your_api_key` is `API_KEY` from `.env`.
+
+Note that this will generate a token which will expire after 1 day.
+
+2. Manually:
+```bash
+python3 token_generator.py your_app --expire n_days
+```
+Here you can set any number of `n_days` when your token will expire.
