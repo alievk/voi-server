@@ -1,3 +1,9 @@
+<p align="center">
+  <img src="https://github.com/user-attachments/assets/f4f571a1-b06f-4c38-8cb6-88d6ca54d19f" width="256" height="256" />
+</p>
+
+Voi is a free and open source backend for reatime voice agents. Check the JS [client](https://github.com/alievk/voi-js-client).
+
 # Table of Contents
 - [Requirements](#requirements)
   - [Hardware](#hardware)
@@ -14,12 +20,6 @@
     - [Agents](#agents)
     - [Run the server](#run-the-server)
   - [Access tokens](#access-tokens)
-
-<p align="center">
-  <img src="https://github.com/user-attachments/assets/f4f571a1-b06f-4c38-8cb6-88d6ca54d19f" width="256" height="256" />
-</p>
-
-Voi is a free and open source backend for reatime voice agents. Check the JS [client](https://github.com/alievk/voi-js-client).
 
 ## Requrements
 
