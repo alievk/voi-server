@@ -42,10 +42,6 @@ RUN pip3 install \
     jupyterlab==4.2.5 \
     ipywidgets
 
-# Set up Jupyter configuration for the new user
-RUN mkdir -p /home/user/.jupyter
-COPY jupyter_lab_config.py /home/user/.jupyter/
-
 # Create Trash directory and set permissions
 RUN mkdir -p /home/user/.local/share/Trash
 

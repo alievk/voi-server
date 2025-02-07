@@ -22,6 +22,7 @@ services:
           memory: 32g
     environment:
       - NVIDIA_VISIBLE_DEVICES=0 # limit available GPUs
+      - JUPYTER_TOKEN= # set the Jupyter token
     ports:
       - "2223:22" # ssh
       - "8775:8765" # server
