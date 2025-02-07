@@ -2,18 +2,18 @@ version: '3.8'
 
 networks:
   default:
-    name: voice-agent-network
+    name: voi-server-network
     driver: bridge
 
 services:
-  voice-agent-core:
+  voi-server:
     build: 
       context: .
       dockerfile: Dockerfile
       args:
         USER_ID: ${USER_ID}
         GROUP_ID: ${GROUP_ID}
-    container_name: voice-agent-core-container
+    container_name: voi-server-container
     runtime: nvidia
     deploy:
       resources:
@@ -26,7 +26,7 @@ services:
       - "2222:22" # ssh
       - "8765:8765" # server
     volumes:
-      - ${HOME}/path/to/voi-core:/home/user/voi-core # map the voi-core repo to the container
+      - ..:/home/user/voi-server # map the voi-core repo to the container
       - /host/path/to/local/dir:/home/user/.local # map .local and .cache to persist the cache (model weights, etc)
       - /host/path/to/cache/dir:/home/user/.cache
     command: ["/bin/bash", "/home/user/start.sh"]
