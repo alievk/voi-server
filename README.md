@@ -1,3 +1,20 @@
+# Table of Contents
+- [Requirements](#requirements)
+  - [Hardware](#hardware)
+  - [Software](#software)
+- [Setup](#setup)
+  - [Development environment](#development-environment)
+  - [Caddy](#caddy)
+  - [LiteLLM](#litellm)
+  - [Voi server](#voi-server)
+    - [Environment variables](#environment-variables)
+    - [Speech-to-text model](#speech-to-text-model)
+    - [Text-to-speech models](#text-to-speech-models)
+    - [Custom text-to-speech models](#custom-text-to-speech-models)
+    - [Agents](#agents)
+    - [Run the server](#run-the-server)
+  - [Access tokens](#access-tokens)
+
 <p align="center">
   <img src="https://github.com/user-attachments/assets/f4f571a1-b06f-4c38-8cb6-88d6ca54d19f" width="256" height="256" />
 </p>
@@ -145,7 +162,7 @@ cp .env.example .env
 - `TOKEN_SECRET_KEY` is a secret key for generating [access tokens](#access-tokens) to the websocket endpoint. You should not reveal this key to a client.
 - `API_KEY` is the HTTPS API access key. You need to share it with a client.
 
-#### Text-to-speech model
+#### Speech-to-text model
 Voi relies on [Whisper](https://github.com/openai/whisper) for speech transcribition and adds realtime (transcribe-as-you-speek) processing on top of that. The model weights are downloaded automatically on the first launch.
 
 #### Text-to-speech models
