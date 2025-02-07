@@ -2,7 +2,7 @@
   <img src="https://github.com/user-attachments/assets/f4f571a1-b06f-4c38-8cb6-88d6ca54d19f" width="256" height="256" />
 </p>
 
-Voi is a free and open source backend for reatime voice agents. Check the JS [client](https://github.com/alievk/voi-js-client).
+Voi is a free and open source backend for realtime voice agents. Check the JS [client](https://github.com/alievk/voi-js-client).
 
 # Table of Contents
 - [Requirements](#requirements)
@@ -24,7 +24,7 @@ Voi is a free and open source backend for reatime voice agents. Check the JS [cl
   - [Contribution](#contribution)
   - [License](#license)
 
-## Requrements
+## Requirements
 
 ### Hardware
 - 9Gb+ of GPU memory. I recommend GeForce RTX 3090 or better for a single worker.
@@ -51,7 +51,7 @@ git clone https://github.com/alievk/voi-core.git
 cd voi-core
 ```
 
-Copy your `id_rsa.pub` into `docker` folder to be able to ssh directily into the container.
+Copy your `id_rsa.pub` into `docker` folder to be able to ssh directly into the container.
 ```bash
 cp ~/.ssh/id_rsa.pub docker/
 ```
@@ -166,7 +166,7 @@ cp .env.example .env
 - `API_KEY` is the HTTPS API access key. You need to share it with a client.
 
 #### Speech-to-text model
-Voi relies on [Whisper](https://github.com/openai/whisper) for speech transcribition and adds realtime (transcribe-as-you-speek) processing on top of that. The model weights are downloaded automatically on the first launch.
+Voi relies on [Whisper](https://github.com/openai/whisper) for speech transcribition and adds realtime (transcribe-as-you-speak) processing on top of that. The model weights are downloaded automatically on the first launch.
 
 #### Text-to-speech models
 Voi uses xTTS-v2 model to generate speech. It gives the best tradeoff between the quality and speed.  
@@ -233,7 +233,7 @@ Here you can set any number of `n_days` when your token will expire.
 ## Philosophy
 Realtime conversation with a human is a really complex task, as it requires from the agent an empathy, competence and speed. If you lack a single piece of these, your agent is useless. That's why making a good voice agent is not just stacking a bunch of APIs together. You have to develop it very carefully, making a small step, then testing, making a small step, then testing...  
 
-There are two main factors which enabled me to run this project. First, the emergence of smart, fast and cheap LLMs neccessary for agents intelligence. Second, the advancement of code copilots. Though I have a deep learning background, there are lots of topics beyond my competence required to build a good voice agent.
+There are two main factors which enabled me to run this project. First, the emergence of smart, fast and cheap LLMs necessary for agents intelligence. Second, the advancement of code copilots. Though I have a deep learning background, there are lots of topics beyond my competence required to build a good voice agent.
 
 While open sourcing Voi, I realized many people could use it for learning software engineering. Yes, this is still actual, because this project is basically many pieces of AI-generated code carefully stitched together by a human engineer.
 
