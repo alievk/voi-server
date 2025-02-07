@@ -56,16 +56,11 @@ Copy your `id_rsa.pub` into `docker` folder to be able to ssh directly into the 
 cp ~/.ssh/id_rsa.pub docker/
 ```
 
-Make a copy of `docker/jupyter_lab_config.example.py`. Follow the instructions inside this file if you need a password for Jupyter or leave it as is.
-```bash
-cp docker/jupyter_lab_config.example.py docker/jupyter_lab_config.py
-```
-
 Make a copy of `docker/docker-compose-dev.example.yml`.
 ```bash
 cp docker/docker-compose-dev.example.yml docker/docker-compose-dev.yml
 ```
-In the `docker-compose-dev.yml`, edit the `environment`, `ports` and `volumes` sections as you need.
+In the `docker-compose-dev.yml`, edit the `environment`, `ports` and `volumes` sections as you need. If you need a Jupyter server, set your token in the `JUPYTER_TOKEN` variable, otherwise it won't run for safety reasons.
 
 Build and run the development container.
 ```bash
