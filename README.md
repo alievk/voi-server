@@ -193,14 +193,31 @@ Make a copy of `agents.example.json` and edit it for your needs.
 cp agents.example.json agents.json
 ```
 
-Rules:
-- You can write long prompts line-by-line for better readibility.
-- Response examples are given as lists of dicts: `{"user": user_input, "assistant": assistant_response}`
-- `llm_model` should match one of the models defined in the `litellm_config.yaml`. Exception is `echo` agent, which just forwards user audio transcription.
-- `control_agent` is an agent which controls the output of the parent agent. See `control_agent_llama_3.1_70b_instruct_turbo` for example.
-- `model` in `voices:character` should match one of the models in `tts_models.json`.
-- `voice` in `voices:character` should match one of the voices in the `voices` file of that particular TTS model in `tts_models.json`.
-- `voice_tone` in `greetings` should match one of the tones in the `voice_tone_map` dict of that particular TTS model in `tts_models.json`.
+Each agent in `agents.json` has the following structure:
+- `llm_model`: The language model to use (must match models in `litellm_config.yaml`)
+- `control_agent` (optional): Name of an agent that filters/controls the main agent's responses
+- `voices`: Configuration for speech synthesis
+  - `character`: Main voice settings
+    - `model`: TTS model name from `tts_models.json`
+    - `voice`: Voice identifier for the model
+    - `speed` (optional): Speech speed multiplier
+  - `narrator` (optional): Voice for narrative comments
+    - Same settings as `character` plus:
+    - `leading_silence`: Silence before narration
+    - `trailing_silence`: Silence after narration
+- `system_prompt`: Array of strings defining the agent's personality and behavior. Can include special templates:
+  - `{character_agent_message_format_voice_tone}`: Adds instructions for voice tone control (neutral/warm/excited/sad)
+  - `{character_agent_message_format_narrator_comments}`: Adds instructions for narrator comments format (*actions in third person*)
+- `examples` (optional): List of conversation examples for few-shot learning
+- `greetings`: Initial messages configuration
+  - `choices`: List of greeting messages (can include pre-cached voice files)
+  - `voice_tone`: Emotional tone for greeting (must match tones in `tts_models.json`)
+
+Special agents like `control_agent` can have additional fields:
+- `model`: Processing type (e.g. "pattern_matching")
+- `denial_phrases`: Phrases to filter out
+- `giveup_after`: Number of retries before giving up
+- `giveup_response`: Fallback responses
 
 #### Run the server
 Ssh into the container and run:
