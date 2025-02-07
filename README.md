@@ -20,6 +20,9 @@ Voi is a free and open source backend for reatime voice agents. Check the JS [cl
     - [Agents](#agents)
     - [Run the server](#run-the-server)
   - [Access tokens](#access-tokens)
+  - [Philosophy](#philosophy)
+  - [Contribution](#contribution)
+  - [License](#license)
 
 ## Requrements
 
@@ -226,3 +229,16 @@ Note that this will generate a token which will expire after 1 day.
 python3 token_generator.py your_app --expire n_days
 ```
 Here you can set any number of `n_days` when your token will expire.
+
+## Philosophy
+Realtime conversation with a human is a really complex task, as it requires from the agent an empathy, competence and speed. If you lack a single piece of these, your agent is useless. That's why making a good voice agent is not just stacking a bunch of APIs together. You have to develop it very carefully, making a small step, then testing, making a small step, then testing...  
+
+There are two main factors which enabled me to run this project. First, the emergence of smart, fast and cheap LLMs neccessary for agents intelligence. Second, the advancement of code copilots. Though I have a deep learning background, there are lots of topics beyond my competence required to build a good voice agent.
+
+While open sourcing Voi, I realized many people could use it for learning software engineering. Yes, this is still actual, because this project is basically many pieces of AI-generated code carefully stitched together by a human engineer.
+
+## Contribution
+You are welcome to open PRs with bug fixes, new features and documentation improvements.
+
+## License
+Voi uses the MIT license, which basically means you can do anything with it, free of charge. However, the dependencies may have different licenses. Check them if you care.
