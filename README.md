@@ -127,22 +127,42 @@ If you use AWS Lightsail, do not forget to add a custom TCP rule for the port 40
 If you are not in the restricted region, you can run LiteLLM server locally on your host machine.
 
 #### Setup
-For the details of setting up LiteLLM, visit [their repo](https://github.com/BerriAI/litellm), but basically you need to follow these steps:
-- Get the code.
+For the details of setting up LiteLLM, visit [the repo](https://github.com/BerriAI/litellm), but basically you need to follow these steps.
+
+Get the code.
 ```bash
 git clone https://github.com/BerriAI/litellm
 cd litellm
-```
-- Add the master key - you can change this after setup.
+```  
+
+Add the master key - you can change this after setup.
 ```bash
 echo 'LITELLM_MASTER_KEY="sk-1234"' > .env
 source .env
-```
-- Create models configuration file.
+```  
+
+Create models configuration file.
 ```bash
-touch litellm_config.yaml
+vim litellm_config.yaml
+```  
+
+Example configuration:
+```yaml
+model_list:
+  - model_name: gemini-1.5-flash
+    litellm_params:
+      model: openai/gemini-1.5-flash
+      api_key: your_googleapi_key
+      api_base: https://generativelanguage.googleapis.com/v1beta/openai
+  - model_name: meta-llama-3.1-70b-instruct-turbo
+    litellm_params:
+      model: openai/meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo
+      api_key: your_deepinfra_key
+      api_base: https://api.deepinfra.com/v1/openai
 ```
-Look at [litellm_config.example.yaml](litellm_config.example.yaml) for a reference. The `model` format is `{API format}/{model name}`, where `API format` is `openai`/`anthropic` and `{model name}` is the model name in the provider's format (`gpt-4o-mini` for OpenAI or `meta-llama/Meta-Llama-3.1-8B-Instruct` for DeepInfra). 
+
+The `model` format is `{API format}/{model name}`, where `{API format}` is `openai`/`anthropic` and `{model name}` is the model name in the provider's format (`gpt-4o-mini` for OpenAI or `meta-llama/Meta-Llama-3.1-8B-Instruct` for DeepInfra). Look at [litellm_config.example.yaml](litellm_config.example.yaml) for more examples.  
+
 - Start LiteLLM server.
 ```bash
 docker-compose up
