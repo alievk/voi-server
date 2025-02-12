@@ -28,7 +28,7 @@ class VoiceGenerator:
         model_name=None,
         voice=None,
         cached=False,
-        voice_speed=1.0,
+        voice_speed=None,
         leading_silence=None,
         trailing_silence=None
     ):
@@ -38,7 +38,7 @@ class VoiceGenerator:
         self.model_name = "multispeaker_original" if model_name is None else model_name
         self.language = 'en'
         self.tts_temperature = 0.7
-        self.speed = voice_speed
+        self.speed = voice_speed if voice_speed is not None else 1.0
         self.leading_silence = 0.0 if leading_silence is None else leading_silence
         self.trailing_silence = 0.0 if trailing_silence is None else trailing_silence
 
@@ -106,8 +106,7 @@ class VoiceGenerator:
             "model_name": model_name,
             "model": model,
             "voices": voices,
-            "avg_text_len": model_config["avg_text_len"],
-            "speed": model_config.get("speed", 1.0)
+            "avg_text_len": model_config["avg_text_len"]
         }
         if "voice_tone_map" in model_config:
             model_params["voice_tone_map"] = model_config["voice_tone_map"]
@@ -196,6 +195,7 @@ class MultiVoiceGenerator:
                 voice=params.get("voice"),
                 leading_silence=params.get("leading_silence"),
                 trailing_silence=params.get("trailing_silence"),
+                voice_speed=params.get("speed"),
                 cached=cached,
             )
 
