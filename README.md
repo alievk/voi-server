@@ -282,7 +282,7 @@ While open sourcing Voi, I realized many people could use it for learning softwa
 You are welcome to open PRs with bug fixes, new features and documentation improvements.
 
 Or you can just buy me a coffee and I will convert it to code!  
-[![Buy Me A Coffee](https://www.buymeacoffee.com/assets/img/custom_images/orange_img.png)](buymeacoffee.com/alievk)
+[![Buy Me A Coffee](https://www.buymeacoffee.com/assets/img/custom_images/orange_img.png)](https://buymeacoffee.com/alievk)
 
 ## License
 Voi uses the MIT license, which basically means you can do anything with it, free of charge. However, the dependencies may have different licenses. Check them if you care.
