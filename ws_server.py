@@ -36,6 +36,13 @@ def serialize_message(metadata, blob=None):
         return metadata_length + metadata + blob
 
 
+def deserialize_message(data):
+    metadata_length = int.from_bytes(data[:4], byteorder='big')
+    metadata = json.loads(data[4:4+metadata_length].decode('utf-8'))
+    blob = data[4+metadata_length:] if len(data) > 4+metadata_length else None
+    return metadata, blob
+
+
 async def safe_send(websocket, message, fatal=False):
     try:
         if isinstance(message, bytes):
@@ -185,7 +192,8 @@ async def start_conversation(websocket, token_data):
             "agent_name"
         ]
 
-        init_message = await websocket.receive_json()
+        message = await websocket.receive()
+        init_message, _ = deserialize_message(message["bytes"])
         logger.info("Received init message: {}", init_message)
 
         for field in init_message:
@@ -319,26 +327,27 @@ async def start_conversation(websocket, token_data):
             break
         
         if "bytes" in message:
-            if not audio_input_stream.is_running():
-                audio_input_stream.start()
-            audio_input_stream.put(message["bytes"])
-        else:
             try:
-                message_data = json.loads(message["text"])
-                message_type = message_data["type"]
-                logger.debug(f"Received message: {message_data}")
-                if message_type == "start_recording":
+                metadata, blob = deserialize_message(message["bytes"])
+                message_type = metadata["type"]
+                logger.debug(f"Received message: {metadata}")
+
+                if message_type == "audio":
+                    if not audio_input_stream.is_running():
+                        audio_input_stream.start()
+                    audio_input_stream.put(blob)
+                elif message_type == "start_recording":
                     audio_input_stream.start()
                 elif message_type in ["create_response", "stop_recording"]:
                     audio_input_stream.stop()
                 elif message_type == "manual_text":
-                    conversation.on_manual_text(message_data["content"])
+                    conversation.on_manual_text(metadata["content"])
                 elif message_type == "interrupt":
                     conversation.on_user_interrupt(
-                        speech_id=int(message_data["speech_id"]), 
-                        interrupted_at=message_data["interrupted_at"])
+                        speech_id=int(metadata["speech_id"]), 
+                        interrupted_at=metadata["interrupted_at"])
                 elif message_type == "invoke_llm":
-                    asyncio.run_coroutine_threadsafe(invoke_llm(message_data), asyncio.get_running_loop())
+                    asyncio.run_coroutine_threadsafe(invoke_llm(metadata), asyncio.get_running_loop())
                 else:
                     e = f"Message type {message_type} is not supported"
                     logger.warning(e)
@@ -347,6 +356,8 @@ async def start_conversation(websocket, token_data):
                 e = f"Error processing client message: {e}. Message: {message}"
                 logger.error(e)
                 await send_error(websocket, e)
+        else:
+            logger.warning(f"Received text message: {message['text']}")
 
     logger.info("Cleaning up resources")
     voice_generator.stop()
