@@ -201,14 +201,11 @@ cp tts_models.example.json tts_models.json
 Voi allows changing voice tone of the agent dynamically during the conversation (like neutral or excited), but the pre-trained model coming along with xTTS doesn't allow this. I have a custom pipeline for fine-tuning text-to-speech models on audio datasets and enabling dynamic tone changing, which I'm not open sourcing today. If you need a custom model, please DM me on [X](https://x.com/alievk0).
 
 #### Agents
-`agents.json` is where you create your virtual personalities, define their behaviour and voice. `agents.example.json` demonstrates some fun use cases and utility agents like a shallow speech-to-text test and a sub-agent for discarding Llama's "I can't create explicit content"-like responses.
+Agents are defined in JSON files in the `agents` directory. The control agents are defined in `agents/control_agents.json`. To add a new agent, simply create a JSON file with agent configurations in the `agents` directory and it will be loaded when the server starts. A client can also send an agent config when opening a new connection using the `agent_config` field.
 
-Make a copy of `agents.example.json` and edit it for your needs.
-```bash
-cp agents.example.json agents.json
-```
+An example of agent configurations can be found in the [voi-js-client repository](https://github.com/alievk/voi-js-client/blob/main/config/agents.example.json).
 
-Each agent in `agents.json` has the following structure:
+Each agent configuration has the following structure:
 - `llm_model`: The language model to use (must match models in `litellm_config.yaml`)
 - `control_agent` (optional): Name of an agent that filters/controls the main agent's responses
 - `voices`: Configuration for speech synthesis
