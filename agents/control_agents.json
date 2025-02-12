@@ -1,0 +1,27 @@
+{
+    "control_agent_llama_3.1_70b_instruct_turbo": {
+        "model": "pattern_matching",
+        "denial_phrases": [
+            "I cannot create",
+            "I can't create",
+            "I cannot provide",
+            "I can't provide",
+            "I cannot engage in",
+            "I can't engage in",
+            "I can't support that request",
+            "I can't help with that",
+            "I can't help you with that",
+            "I can't assist you",
+            "I cannot answer that",
+            "I can't answer that",
+            "explicit content",
+            "promotes violence",
+            "promotes harmful"
+        ],
+        "giveup_after": 3,
+        "giveup_response": [
+            "Mmm?",
+            "Sorry, what?"
+        ]
+    }
+}

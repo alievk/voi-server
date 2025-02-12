@@ -166,8 +166,12 @@ class AgentConfigManager:
         self._resolve_nested_agents()
 
     def _load_agent_list(self):
-        with open(os.path.join(os.path.dirname(__file__), "agents.json"), "r") as f:
-            return json.load(f)
+        agent_list = {}
+        for file in os.listdir(os.path.join(os.path.dirname(__file__), "agents")):
+            if file.endswith(".json"):
+                with open(os.path.join(os.path.dirname(__file__), "agents", file), "r") as f:
+                    agent_list.update(json.load(f))
+        return agent_list
 
     def _resolve_nested_agents(self):
         for agent_name, agent_config in self._agent_list.items():
