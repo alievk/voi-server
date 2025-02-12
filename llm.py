@@ -189,9 +189,6 @@ class AgentConfigManager:
         return self._agent_list[agent_name]
 
 
-agent_config_manager = AgentConfigManager()
-
-
 class BaseLLMAgent:
     def __init__(self, 
         model_name, 

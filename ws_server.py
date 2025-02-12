@@ -16,7 +16,7 @@ import torch
 from recognition import OnlineASR
 from generation import MultiVoiceGenerator, DummyVoiceGenerator, AsyncVoiceGenerator
 from audio import AudioInputStream, WavGroupSaver, convert_f32le_to_s16le, convert_s16le_to_ogg
-from llm import agent_config_manager, ConversationContext, BaseLLMAgent, CharacterLLMAgent, CharacterEchoAgent, voice_tone_emoji
+from llm import AgentConfigManager, ConversationContext, BaseLLMAgent, CharacterLLMAgent, CharacterEchoAgent, voice_tone_emoji
 from conversation import Conversation
 from token_generator import generate_token, TOKEN_SECRET_KEY
 
@@ -237,6 +237,7 @@ async def start_conversation(websocket, token_data):
         cached=True
     )
 
+    agent_config_manager = AgentConfigManager()
     if init_message.get("agent_config"):
         agent_config_manager.add_agent(init_message["agent_name"], json.loads(init_message["agent_config"]))
     agent_config = agent_config_manager.get_config(init_message["agent_name"])
