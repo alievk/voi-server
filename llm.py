@@ -358,6 +358,11 @@ class CharacterLLMAgent(BaseLLMAgent):
 
     @staticmethod
     def from_config(config):
+        required_fields = ["llm_model", "system_prompt"]
+        for field in required_fields:
+            if field not in config:
+                raise ValueError(f"Missing required field: {field}")
+
         control_agent = None
         if "control_agent" in config:
             if config["control_agent"]["model"] == "pattern_matching":
@@ -368,12 +373,15 @@ class CharacterLLMAgent(BaseLLMAgent):
         return CharacterLLMAgent(
             system_prompt=config["system_prompt"],
             model_name=config["llm_model"],
-            examples=config["examples"],
-            greetings=config["greetings"],
+            examples=config.get("examples"),
+            greetings=config.get("greetings"),
             control_agent=control_agent
         )
 
     def greeting_message(self):
+        if not self.greetings:
+            return None
+
         greeting = random.choice(self.greetings["choices"])
         # greeting is a dict like {"content": "...", "file": "..."} or a plain string
         if isinstance(greeting, dict):
