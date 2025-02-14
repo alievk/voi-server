@@ -96,7 +96,11 @@ class ConversationContext:
             elif d["type"] == "image_url":
                 if "image_url" not in d:
                     raise ValueError("Image URL must have 'image_url' field")
-                if not isinstance(d["image_url"], str):
+                if not isinstance(d["image_url"], dict):
+                    raise ValueError("Image URL must be a dictionary")
+                if "url" not in d["image_url"]:
+                    raise ValueError("Image URL must have 'url' field")
+                if not isinstance(d["image_url"]["url"], str):
                     raise ValueError("Image URL must be a string")
             else:
                 raise ValueError(f"Unknown content type {d['type']}")

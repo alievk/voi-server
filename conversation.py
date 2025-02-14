@@ -90,9 +90,14 @@ class Conversation:
             self._maybe_respond()
 
     def on_manual_text(self, text):
+        content = [{"type": "text", "text": text}]
+        if self.attachments:
+            content.extend(self.attachments)
+            self.attachments = []
+
         message = {
             "role": "user",
-            "content": [{"type": "text", "text": text}],
+            "content": content,
             "time": datetime.now(),
             "from": "text"
         }
