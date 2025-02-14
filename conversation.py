@@ -4,6 +4,7 @@ from loguru import logger
 
 from llm import BaseLLMAgent
 from recognition import Word, AudioBuffer, OnlineASR
+from image import image_to_openai_url
 
 
 class Conversation:
@@ -29,10 +30,13 @@ class Conversation:
 
         self._event_loop = asyncio.get_event_loop()
 
+        self.attachments = []
+
     def greeting(self):
         message = self.character_agent.greeting_message()
-        message = self.conversation_context.add_message(message)
-        self._generate_voice(message)
+        if message:
+            message = self.conversation_context.add_message(message)
+            self._generate_voice(message)
 
     @logger.catch(reraise=True)
     async def handle_input_audio(self, audio_chunk):
@@ -84,6 +88,22 @@ class Conversation:
         self.conversation_context.add_message(message)
         self._maybe_respond()
 
+    def on_image_blob(self, image):
+        self.attachments.append(
+            {
+                "type": "image_url",
+                "image_url": {"url": image_to_openai_url(image)}
+            }
+        )
+
+    def on_image_url(self, image_url):
+        self.attachments.append(
+            {
+                "type": "image_url",
+                "image_url": {"url": image_url}
+            }
+        )
+
     def _maybe_respond(self):
         asyncio.run_coroutine_threadsafe(self._maybe_respond_async(), self._event_loop)
 
@@ -93,6 +113,11 @@ class Conversation:
             if not need_response:
                 logger.debug("No need to respond")
                 return
+
+            if self.attachments:
+                last_message = self.conversation_context.messages[-1]
+                # last_message["content"].extend(self.attachments) # not supported yet
+                self.attachments = []
 
             self.conversation_context.process_interrupted_messages()
             response = self.character_agent.completion(self.conversation_context)

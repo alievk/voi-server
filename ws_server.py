@@ -19,6 +19,7 @@ from audio import AudioInputStream, WavGroupSaver, convert_f32le_to_s16le, conve
 from llm import AgentConfigManager, ConversationContext, BaseLLMAgent, CharacterLLMAgent, CharacterEchoAgent, voice_tone_emoji
 from conversation import Conversation
 from token_generator import generate_token, TOKEN_SECRET_KEY
+from image import blob_to_image
 
 os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
 torch.backends.cudnn.benchmark = False
@@ -136,6 +137,8 @@ async def start_conversation(websocket, token_data):
             if isinstance(msg["content"], dict):
                 data["content"] = msg["content"]["text"]
                 data["sentiment"] = voice_tone_emoji(msg["content"]["voice_tone"])
+            elif isinstance(msg["content"], list):
+                data["content"] = msg["content"][0]["text"]
             else:
                 data["content"] = msg["content"]
 
@@ -336,6 +339,10 @@ async def start_conversation(websocket, token_data):
                     if not audio_input_stream.is_running():
                         audio_input_stream.start()
                     audio_input_stream.put(blob)
+                elif message_type == "image_blob":
+                    conversation.on_image_blob(blob_to_image(blob))
+                elif message_type == "image_url":
+                    conversation.on_image_url(metadata["image_url"])
                 elif message_type == "start_recording":
                     audio_input_stream.start()
                 elif message_type in ["create_response", "stop_recording"]:

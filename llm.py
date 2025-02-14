@@ -98,6 +98,10 @@ class ConversationContext:
             self.messages.append(message)
             return message
 
+    def add_attachments(self, attachments):
+        with self.lock:
+            pass
+
     def get_messages(self, include_fields=None, filter=None, processor=None):
         with self.lock:
             if include_fields is None:
@@ -330,7 +334,16 @@ class BaseLLMAgent:
         return ""
 
     def _messages_to_text(self, messages):
-        return "\n".join([f"{msg['role']}: {msg['content']}" for msg in messages])
+        def truncate_content(content, max_length=100):
+            if isinstance(content, str):
+                return content[:max_length] + "..." if len(content) > max_length else content
+            if isinstance(content, dict):
+                return {k: truncate_content(v) for k, v in content.items()}
+            if isinstance(content, list):
+                return [truncate_content(item) for item in content]
+            return content
+
+        return "\n".join([f"{msg['role']}: {truncate_content(msg['content'])}" for msg in messages])
 
 
 class CharacterLLMAgent(BaseLLMAgent):
