@@ -68,11 +68,22 @@ class Conversation:
             self.user_audio_buffer.push(audio_chunk)
 
         if asr_result and (asr_result["confirmed_text"] or asr_result["unconfirmed_text"]):
-            message = self._create_message_from_transcription(asr_result)
+            text = asr_result["confirmed_text"] or asr_result["unconfirmed_text"] or "..."
             messages = self.conversation_context.get_messages()
             if messages and messages[-1]["role"] == "user":
-                self.conversation_context.update_message(messages[-1]["id"], content=message["content"], handled=False)
+                message = messages[-1]
+                for content in message["content"]:
+                    if content["type"] == "text":
+                        content["text"] = text
+                message["handled"] = False
+                self.conversation_context.update_message(message)
             else:
+                message = {
+                    "role": "user",
+                    "content": [{"type": "text", "text": text}],
+                    "time": datetime.now(),
+                    "from": "audio"
+                }
                 self.conversation_context.add_message(message)
 
         if end_of_audio:
@@ -81,7 +92,7 @@ class Conversation:
     def on_manual_text(self, text):
         message = {
             "role": "user",
-            "content": text,
+            "content": [{"type": "text", "text": text}],
             "time": datetime.now(),
             "from": "text"
         }
@@ -109,22 +120,35 @@ class Conversation:
 
     async def _maybe_respond_async(self):
         try:
-            need_response = self.conversation_context.messages and self.conversation_context.messages[-1]["role"] == "user"
-            if not need_response:
+            messages = self.conversation_context.get_messages()
+            if not messages or messages[-1]["role"] != "user":
                 logger.debug("No need to respond")
                 return
 
             if self.attachments:
-                last_message = self.conversation_context.messages[-1]
                 # last_message["content"].extend(self.attachments) # not supported yet
                 self.attachments = []
 
             self.conversation_context.process_interrupted_messages()
             response = self.character_agent.completion(self.conversation_context)
 
+            if isinstance(response, dict):
+                content = [{
+                    "type": "text",
+                    "text": response["text"]
+                }]
+                voice_tone = response.get("voice_tone")
+            else:
+                content = [{
+                    "type": "text",
+                    "text": response
+                }]
+                voice_tone = None
+
             message = {
                 "role": "assistant",
-                "content": response,
+                "content": content,
+                "voice_tone": voice_tone,
                 "time": datetime.now(),
                 "from": "llm"
             }
@@ -143,30 +167,25 @@ class Conversation:
         try:
             if message.get("file"): # play cached audio
                 content = f"file:{message['file']}"
-            elif isinstance(message["content"], dict):
-                self.voice_generator.maybe_set_voice_tone(message["content"].get("voice_tone"))
-                content = message["content"]["text"]
             else:
-                content = message["content"]
+                content = [c["text"] for c in message["content"] if c["type"] == "text"][0]
 
+            if "voice_tone" in message:
+                self.voice_generator.maybe_set_voice_tone(message["voice_tone"])
             self.voice_generator.generate(text=content, id=message["id"])
         except Exception as e:
             self.emit_error(e)
 
-    def _create_message_from_transcription(self, transcription):
-        return {
-            "role": "user",
-            "content": transcription["confirmed_text"] or transcription["unconfirmed_text"] or "...",
-            "time": datetime.now(),
-            "from": "audio"
-        }
-
     def on_assistant_audio_end(self, speech_id, duration):
         messages = self.conversation_context.get_messages(filter=lambda msg: msg["role"] == "assistant" and msg["id"] == speech_id)
         assert messages, f"Message with speech_id {speech_id} not found"
-        self.conversation_context.update_message(messages[0]["id"], audio_duration=duration)
+        message = messages[0]
+        message["audio_duration"] = duration
+        self.conversation_context.update_message(message)
 
     def on_user_interrupt(self, speech_id, interrupted_at):
         messages = self.conversation_context.get_messages(filter=lambda msg: msg["role"] == "assistant" and msg["id"] == speech_id)
         assert messages, f"Message with speech_id {speech_id} not found"
-        self.conversation_context.update_message(messages[0]["id"], interrupted_at=interrupted_at)
+        message = messages[0]
+        message["interrupted_at"] = interrupted_at
+        self.conversation_context.update_message(message)

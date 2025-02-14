@@ -60,29 +60,49 @@ def model_supports_json_output(model_name):
 
 
 class ConversationContext:
-    def __init__(self, messages=None, context_changed_cb=None):
-        self.messages = messages or []
-        self._check_messages(self.messages)
-        self.lock = threading.Lock()
+    def __init__(self, context_changed_cb=None):
         self.context_changed_cb = context_changed_cb
+        self.lock = threading.Lock()
         self._event_loop = asyncio.get_event_loop()
-
-    def _check_messages(self, messages):
-        if not messages:
-            return
-
-        if not isinstance(messages, list):
-            raise ValueError("Messages must be a list")
-        if not all(isinstance(msg, dict) for msg in messages):
-            raise ValueError("Messages must be a list of dictionaries")
-        if "role" not in messages[0]:
-            raise ValueError("Messages must be a list of dictionaries with 'role' field")
-        if "content" not in messages[0]:
-            raise ValueError("Messages must be a list of dictionaries with 'content' field")
+        self._messages = []
 
     def _handle_context_changed(self):
         if self.context_changed_cb:
             asyncio.run_coroutine_threadsafe(self.context_changed_cb(self), self._event_loop)
+
+    def _check_message(self, message):
+        # Check important fields
+        if not isinstance(message, dict):
+            raise ValueError("Message must be a dictionary")
+        if "role" not in message:
+            raise ValueError("Message must have 'role' field")
+        if message["role"].lower() not in ["assistant", "user"]:
+            raise ValueError(f"Unknown role {message['role']}")
+        if "content" not in message:
+            raise ValueError("Message must have 'content' field")
+        if not isinstance(message["content"], list):
+            raise ValueError("'content' field must be a list")
+        
+        def check_content(d):
+            if not isinstance(d, dict):
+                raise ValueError("Content must be a dictionary")
+            if "type" not in d:
+                raise ValueError("Content must have 'type' field")
+            if d["type"] == "text":
+                if "text" not in d:
+                    raise ValueError("Text must have 'text' field")
+                if not isinstance(d["text"], str):
+                    raise ValueError("Text must be a string")
+            elif d["type"] == "image_url":
+                if "image_url" not in d:
+                    raise ValueError("Image URL must have 'image_url' field")
+                if not isinstance(d["image_url"], str):
+                    raise ValueError("Image URL must be a string")
+            else:
+                raise ValueError(f"Unknown content type {d['type']}")
+
+        for content in message["content"]:
+            check_content(content)
 
     def add_message(self, message):
         new_message = self._add_message(message)
@@ -90,12 +110,15 @@ class ConversationContext:
         return new_message
 
     def _add_message(self, message):
-        assert isinstance(message, dict), f"Message must be a dictionary, got {message.__class__}"
-        assert message["role"].lower() in ["assistant", "user"], f"Unknown role {message['role']}"
+        try:
+            self._check_message(message)
+        except ValueError as e:
+            logger.error("Invalid message: {}", message)
+            raise e
+        message["id"] = len(self._messages)
+        message["handled"] = False
         with self.lock:
-            message["id"] = len(self.messages)
-            message["handled"] = False
-            self.messages.append(message)
+            self._messages.append(message)
             return message
 
     def add_attachments(self, attachments):
@@ -105,9 +128,9 @@ class ConversationContext:
     def get_messages(self, include_fields=None, filter=None, processor=None):
         with self.lock:
             if include_fields is None:
-                messages = self.messages
+                messages = self._messages.copy()
             else:
-                messages = [{k: v for k, v in msg.items() if k in include_fields} for msg in self.messages]
+                messages = [{k: v for k, v in msg.items() if k in include_fields} for msg in self._messages]
 
             if filter:
                 messages = [msg for msg in messages if filter(msg)]
@@ -117,49 +140,27 @@ class ConversationContext:
 
             return messages
 
-    def update_message(self, id, **kwargs):
+    def update_message(self, new_message):
+        self._check_message(new_message)
+        assert "id" in new_message, "Message must have 'id' field"
         with self.lock:
-            for msg in self.messages:
-                if msg["id"] == id:
-                    msg.update(kwargs)
-                    if "content" in kwargs:
-                        self._handle_context_changed()
+            for msg in self._messages:
+                if msg["id"] == new_message["id"]:
+                    msg.update(new_message)
+                    self._handle_context_changed()
                     return True
             return False
-
-    def to_text(self):
-        with self.lock:
-            if not self.messages:
-                return ""
-
-            lines = []
-            for item in self.messages:
-                if not "time" in item:
-                    time_str = "00:00:00"
-                else:
-                    time_str = item["time"].strftime("%H:%M:%S")
-                
-                role = item["role"].lower()
-                content = item["content"]
-                
-                lines.append(f"{time_str} | {role} - {content}")
-            
-            return "\n".join(lines)
 
     def process_interrupted_messages(self):
         # FIXME: simple and dirty way to process interrupted messages
         with self.lock:
-            for msg in self.messages:
+            for msg in self._messages:
                 if "interrupted_at" in msg and "audio_duration" in msg:
                     # Cut the message content to the point where it was interrupted
                     percent = msg["interrupted_at"] / msg["audio_duration"]
                     if percent < 1: # if percent > 1, the message was not interrupted
-                        orig_content = msg["content"]["text"] if isinstance(msg["content"], dict) else msg["content"]
-                        cut_content = orig_content[:int(len(orig_content) * percent)] + "... (interrupted)"
-                        if isinstance(msg["content"], dict):
-                            msg["content"]["text"] = cut_content
-                        else:
-                            msg["content"] = cut_content
+                        orig_content = msg["content"][0]["text"]
+                        msg["content"][0]["text"] = orig_content[:int(len(orig_content) * percent)] + "... (interrupted)"
                         del msg["interrupted_at"], msg["audio_duration"] # don't process this message again
                         msg["handled"] = False
 
@@ -237,13 +238,12 @@ class BaseLLMAgent:
         force_json = self.output_json and not model_supports_json_output(self.model_name)
 
         def message_processor(msg):
-            # msg["content"] = stringify_content(msg["content"])
-            if isinstance(msg["content"], dict):
-                msg["content"] = json.dumps(msg["content"])
-
             if msg["role"] == "user" and force_json:
-                msg["content"] += "\nRespond with a valid JSON object."
-
+                for content in msg["content"]:
+                    if content["type"] == "text":
+                        content["text"] = f"{content['text']}\nRespond with a valid JSON object."
+            elif msg["role"] == "assistant":
+                msg["content"] = msg["content"][0]["text"]
             return msg
 
         messages += context.get_messages(
@@ -396,10 +396,8 @@ class CharacterLLMAgent(BaseLLMAgent):
 
         return {
             "role": "assistant",
-            "content": {
-                "text": text, 
-                "voice_tone": self.greetings.get("voice_tone")
-            },
+            "content": [{"type": "text", "text": text}],
+            "voice_tone": self.greetings.get("voice_tone"),
             "file": file,
             "time": datetime.now()
         }
@@ -434,10 +432,14 @@ class CharacterEchoAgent:
         pass
 
     def completion(self, context, stream=False, temperature=0.5):
-        return context.messages[-1]["content"]
+        return context.get_messages()[-1]["content"][0]["text"]
 
     def greeting_message(self):
-        return {"role": "assistant", "content": "Hello, I'm an echo agent", "time": datetime.now()}
+        return {
+            "role": "assistant", 
+            "content": [{"type": "text", "text": "Hello, I'm an echo agent"}], 
+            "time": datetime.now()
+        }
 
 
 class ControlBaseAgent:
@@ -514,7 +516,7 @@ class ControlLLMAgent(BaseLLMAgent):
             response_text = response
 
         context = ConversationContext()
-        context.add_message({"role": "user", "content": response_text})
+        context.add_message({"role": "user", "content": [{"type": "text", "text": response_text}]})
         control_response = super().completion(context)
 
         if control_response["class"] in self.denial_classes:

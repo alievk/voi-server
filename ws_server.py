@@ -130,21 +130,15 @@ async def start_conversation(websocket, token_data):
             data = {
                 "type": "message",
                 "role": msg["role"],
+                "content": msg["content"],
                 "time": msg["time"].strftime("%H:%M:%S"),
                 "id": msg["id"],
                 "from": msg.get("from", "text")
             }
-            if isinstance(msg["content"], dict):
-                data["content"] = msg["content"]["text"]
-                data["sentiment"] = voice_tone_emoji(msg["content"]["voice_tone"])
-            elif isinstance(msg["content"], list):
-                data["content"] = msg["content"][0]["text"]
-            else:
-                data["content"] = msg["content"]
-
             logger.info("Sending message: {}", data)
             await safe_send(websocket, serialize_message(data))
-            context.update_message(msg["id"], handled=True)
+            msg["handled"] = True
+            context.update_message(msg)
 
     @logger.catch(reraise=True)
     async def handle_generated_audio(audio_chunk, speech_id, duration=None):
@@ -226,7 +220,10 @@ async def start_conversation(websocket, token_data):
                 model_name=message_data["model"],
                 system_prompt=message_data["prompt"]
             )
-            context = ConversationContext(messages=message_data["messages"])
+            context = ConversationContext()
+            for msg in message_data["messages"]:
+                msg["content"] = [{"type": "text", "text": msg["content"]}]
+                context.add_message(msg)
             llm_response = agent.completion(context)
             message = {
                 "type": "llm_response",
