@@ -50,15 +50,15 @@ class Conversation:
                 asr_result = self.online_asr.process_chunk(audio_chunk, finalize=True)
 
             if self.final_stt_correction and not self.user_audio_buffer.empty():
+                logger.debug("Performing final stt correction")
                 words = self.offline_asr.transcribe(self.user_audio_buffer.buffer)
                 text = Word.to_text(words)
 
-                if asr_result:
-                    logger.debug(f"Ignoring online asr result and using full audio transcription instead: {text}")
-                    asr_result = {
-                        "confirmed_text": text,
-                        "unconfirmed_text": "",
-                    }
+                logger.debug(f"Final stt correction: {text}")
+                asr_result = {
+                    "confirmed_text": text,
+                    "unconfirmed_text": "",
+                }
 
             self.user_audio_buffer.clear()
         else:
