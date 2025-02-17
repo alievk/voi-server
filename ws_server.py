@@ -336,16 +336,13 @@ async def start_conversation(websocket, token_data):
                     if not audio_input_stream.is_running():
                         audio_input_stream.start()
                     audio_input_stream.put(blob)
-                elif message_type == "image_blob":
-                    conversation.on_image_blob(blob_to_image(blob))
+                elif message_type == "text":
+                    conversation.on_user_text(metadata["content"])
                 elif message_type == "image_url":
-                    conversation.on_image_url(metadata["image_url"])
-                elif message_type == "start_recording":
-                    audio_input_stream.start()
-                elif message_type in ["create_response", "stop_recording"]:
+                    conversation.on_user_image_url(metadata["image_url"])
+                elif message_type in ["create_response"]:
                     audio_input_stream.stop()
-                elif message_type == "manual_text":
-                    conversation.on_manual_text(metadata["content"])
+                    conversation.on_create_response()
                 elif message_type == "interrupt":
                     conversation.on_user_interrupt(
                         speech_id=int(metadata["speech_id"]), 

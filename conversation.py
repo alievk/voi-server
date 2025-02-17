@@ -4,7 +4,7 @@ from loguru import logger
 
 from llm import BaseLLMAgent
 from recognition import Word, AudioBuffer, OnlineASR
-from image import image_to_openai_url
+from image import blob_to_openai_url
 
 
 class Conversation:
@@ -29,8 +29,6 @@ class Conversation:
         self.error_cb = error_cb
 
         self._event_loop = asyncio.get_event_loop()
-
-        self.attachments = []
 
     def greeting(self):
         message = self.character_agent.greeting_message()
@@ -86,53 +84,42 @@ class Conversation:
                 }
                 self.conversation_context.add_message(message)
 
-        if end_of_audio:
-            self._maybe_respond()
-
-    def on_manual_text(self, text):
-        content = [{"type": "text", "text": text}]
-        if self.attachments:
-            content.extend(self.attachments)
-            self.attachments = []
-
+    def on_user_text(self, text):
         message = {
             "role": "user",
-            "content": content,
+            "content": [{"type": "text", "text": text}],
             "time": datetime.now(),
             "from": "text"
         }
         self.conversation_context.add_message(message)
-        self._maybe_respond()
 
-    def on_image_blob(self, image):
-        self.attachments.append(
-            {
-                "type": "image_url",
-                "image_url": {"url": image_to_openai_url(image)}
+    def on_user_image_url(self, image_url):
+        if image_url.startswith("data:image"):
+            image_url = blob_to_openai_url(image_url)
+        content = {
+            "type": "image_url",
+            "image_url": {"url": image_url}
+        }
+        last_message = self.conversation_context.last_message()
+        if last_message and last_message["role"] == "user":
+            last_message["content"].append(content)
+        else:
+            message = {
+                "role": "user",
+                "content": [content],
+                "time": datetime.now(),
             }
-        )
+            self.conversation_context.add_message(message)
 
-    def on_image_url(self, image_url):
-        self.attachments.append(
-            {
-                "type": "image_url",
-                "image_url": {"url": image_url}
-            }
-        )
+    def on_create_response(self):
+        asyncio.run_coroutine_threadsafe(self._create_response(), self._event_loop)
 
-    def _maybe_respond(self):
-        asyncio.run_coroutine_threadsafe(self._maybe_respond_async(), self._event_loop)
-
-    async def _maybe_respond_async(self):
+    async def _create_response(self):
         try:
             messages = self.conversation_context.get_messages()
             if not messages or messages[-1]["role"] != "user":
                 logger.debug("No need to respond")
                 return
-
-            if self.attachments:
-                # last_message["content"].extend(self.attachments) # not supported yet
-                self.attachments = []
 
             self.conversation_context.process_interrupted_messages()
             response = self.character_agent.completion(self.conversation_context)

@@ -125,10 +125,6 @@ class ConversationContext:
             self._messages.append(message)
             return message
 
-    def add_attachments(self, attachments):
-        with self.lock:
-            pass
-
     def get_messages(self, include_fields=None, filter=None, processor=None):
         with self.lock:
             if include_fields is None:
@@ -143,6 +139,12 @@ class ConversationContext:
                 messages = [processor(msg) for msg in messages]
 
             return messages
+
+    def last_message(self):
+        with self.lock:
+            if not self._messages:
+                return None
+            return self._messages[-1]
 
     def update_message(self, new_message):
         self._check_message(new_message)
