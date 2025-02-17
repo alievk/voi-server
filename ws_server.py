@@ -129,8 +129,7 @@ async def start_conversation(websocket, token_data):
             "type": "message",
             "role": message["role"],
             "content": message["content"],
-            "id": message["id"],
-            "from": message.get("from", "text")
+            "id": message["id"]
         }
         logger.info("Sending message: {}", data)
         await safe_send(websocket, serialize_message(data))

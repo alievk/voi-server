@@ -95,9 +95,7 @@ class Conversation:
     def on_user_text(self, text):
         message = {
             "role": "user",
-            "content": [{"type": "text", "text": text}],
-            "time": datetime.now(),
-            "from": "text"
+            "content": [{"type": "text", "text": text}]
         }
         self.conversation_context.add_message(message)
 
@@ -145,9 +143,7 @@ class Conversation:
             message = {
                 "role": "assistant",
                 "content": content,
-                "voice_tone": voice_tone,
-                "time": datetime.now(),
-                "from": "llm"
+                "voice_tone": voice_tone
             }
             new_message = self.conversation_context.add_message(message)
 

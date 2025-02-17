@@ -403,8 +403,7 @@ class CharacterLLMAgent(BaseLLMAgent):
             "role": "assistant",
             "content": [{"type": "text", "text": text}],
             "voice_tone": self.greetings.get("voice_tone"),
-            "file": file,
-            "time": datetime.now()
+            "file": file
         }
 
     def completion(self, context, stream=False, temperature=0.5):
@@ -442,8 +441,7 @@ class CharacterEchoAgent:
     def greeting_message(self):
         return {
             "role": "assistant", 
-            "content": [{"type": "text", "text": "Hello, I'm an echo agent"}], 
-            "time": datetime.now()
+            "content": [{"type": "text", "text": "Hello, I'm an echo agent"}]
         }
 
 
