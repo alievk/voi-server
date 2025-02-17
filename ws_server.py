@@ -124,21 +124,16 @@ async def start_conversation(websocket, token_data):
             user_audio_saver.write(audio_chunk, f"user_{user_speech_counter}.wav")
 
     @logger.catch(reraise=True)
-    async def handle_context_changed(context):
-        messages = context.get_messages(filter=lambda msg: not msg["handled"])
-        for msg in messages:
-            data = {
-                "type": "message",
-                "role": msg["role"],
-                "content": msg["content"],
-                "time": msg["time"].strftime("%H:%M:%S"),
-                "id": msg["id"],
-                "from": msg.get("from", "text")
-            }
-            logger.info("Sending message: {}", data)
-            await safe_send(websocket, serialize_message(data))
-            msg["handled"] = True
-            context.update_message(msg)
+    async def handle_context_changed(message):
+        data = {
+            "type": "message",
+            "role": message["role"],
+            "content": message["content"],
+            "id": message["id"],
+            "from": message.get("from", "text")
+        }
+        logger.info("Sending message: {}", data)
+        await safe_send(websocket, serialize_message(data))
 
     @logger.catch(reraise=True)
     async def handle_generated_audio(audio_chunk, speech_id, duration=None):
@@ -287,6 +282,7 @@ async def start_conversation(websocket, token_data):
     
     logger.info("Initializing conversation")
     conversation = Conversation(
+        audio_input_stream=audio_input_stream,
         asr=asr,
         voice_generator=voice_generator,
         character_agent=character_agent,
@@ -333,15 +329,12 @@ async def start_conversation(websocket, token_data):
                 logger.debug(f"Received message: {metadata}")
 
                 if message_type == "audio":
-                    if not audio_input_stream.is_running():
-                        audio_input_stream.start()
-                    audio_input_stream.put(blob)
+                    conversation.on_user_audio(blob)
                 elif message_type == "text":
                     conversation.on_user_text(metadata["content"])
                 elif message_type == "image_url":
                     conversation.on_user_image_url(metadata["image_url"])
                 elif message_type in ["create_response"]:
-                    audio_input_stream.stop()
                     conversation.on_create_response()
                 elif message_type == "interrupt":
                     conversation.on_user_interrupt(

@@ -10,6 +10,7 @@ from image import blob_to_openai_url
 class Conversation:
     def __init__(
         self, 
+        audio_input_stream,
         asr: OnlineASR, 
         voice_generator,
         character_agent,
@@ -18,6 +19,7 @@ class Conversation:
         final_stt_correction: bool = True,
         error_cb=None
     ):
+        self.audio_input_stream = audio_input_stream
         self.online_asr = asr
         self.offline_asr = asr.asr
         self.user_audio_buffer = AudioBuffer(min_duration=0.1, max_duration=60)
@@ -27,7 +29,10 @@ class Conversation:
         self.stream_user_stt = stream_user_stt
         self.final_stt_correction = final_stt_correction
         self.error_cb = error_cb
+        self.user_attachments = []
 
+        self._stt_finished = asyncio.Event()
+        self._stt_finished.set()
         self._event_loop = asyncio.get_event_loop()
 
     def greeting(self):
@@ -35,6 +40,12 @@ class Conversation:
         if message:
             message = self.conversation_context.add_message(message)
             self._generate_voice(message)
+
+    def on_user_audio(self, audio_chunk):
+        if not self.audio_input_stream.is_running():
+            self.audio_input_stream.start()
+        self.audio_input_stream.put(audio_chunk)
+        self._stt_finished.clear()
 
     @logger.catch(reraise=True)
     async def handle_input_audio(self, audio_chunk):
@@ -67,22 +78,19 @@ class Conversation:
 
         if asr_result and (asr_result["confirmed_text"] or asr_result["unconfirmed_text"]):
             text = asr_result["confirmed_text"] or asr_result["unconfirmed_text"] or "..."
-            messages = self.conversation_context.get_messages()
-            if messages and messages[-1]["role"] == "user":
-                message = messages[-1]
-                for content in message["content"]:
-                    if content["type"] == "text":
-                        content["text"] = text
-                message["handled"] = False
-                self.conversation_context.update_message(message)
+            last_message = self.conversation_context.last_message()
+            if last_message and last_message["role"] == "user":
+                last_message["content"][0]["text"] = text
+                self.conversation_context.update_message(last_message)
             else:
                 message = {
                     "role": "user",
-                    "content": [{"type": "text", "text": text}],
-                    "time": datetime.now(),
-                    "from": "audio"
+                    "content": [{"type": "text", "text": text}]
                 }
                 self.conversation_context.add_message(message)
+
+        if end_of_audio:
+            self._stt_finished.set()
 
     def on_user_text(self, text):
         message = {
@@ -100,22 +108,19 @@ class Conversation:
             "type": "image_url",
             "image_url": {"url": image_url}
         }
-        last_message = self.conversation_context.last_message()
-        if last_message and last_message["role"] == "user":
-            last_message["content"].append(content)
-        else:
-            message = {
-                "role": "user",
-                "content": [content],
-                "time": datetime.now(),
-            }
-            self.conversation_context.add_message(message)
+        self.user_attachments.append(content)
 
     def on_create_response(self):
+        logger.debug("Creating response")
         asyncio.run_coroutine_threadsafe(self._create_response(), self._event_loop)
+        logger.debug("Response created")
 
     async def _create_response(self):
         try:
+            self.audio_input_stream.stop() # (blocking) guarantee that the user audio buffer is decoded
+            await self._stt_finished.wait()
+            self._attach_documents()
+
             messages = self.conversation_context.get_messages()
             if not messages or messages[-1]["role"] != "user":
                 logger.debug("No need to respond")
@@ -150,6 +155,20 @@ class Conversation:
         except Exception as e:
             self.emit_error(e)
             raise e
+
+    def _attach_documents(self):
+        for content in self.user_attachments:
+            last_message = self.conversation_context.last_message()
+            if last_message and last_message["role"] == "user":
+                last_message["content"].append(content)
+                self.conversation_context.update_message(last_message)
+            else:
+                message = {
+                    "role": "user",
+                    "content": [content]
+                }
+                self.conversation_context.add_message(message)
+        self.user_attachments = []
 
     def emit_error(self, error):
         if self.error_cb:

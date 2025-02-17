@@ -66,9 +66,9 @@ class ConversationContext:
         self._event_loop = asyncio.get_event_loop()
         self._messages = []
 
-    def _handle_context_changed(self):
+    def _handle_context_changed(self, message):
         if self.context_changed_cb:
-            asyncio.run_coroutine_threadsafe(self.context_changed_cb(self), self._event_loop)
+            asyncio.run_coroutine_threadsafe(self.context_changed_cb(message), self._event_loop)
 
     def _check_message(self, message):
         # Check important fields
@@ -110,7 +110,7 @@ class ConversationContext:
 
     def add_message(self, message):
         new_message = self._add_message(message)
-        self._handle_context_changed()
+        self._handle_context_changed(new_message)
         return new_message
 
     def _add_message(self, message):
@@ -120,7 +120,6 @@ class ConversationContext:
             logger.error("Invalid message: {}", message)
             raise e
         message["id"] = len(self._messages)
-        message["handled"] = False
         with self.lock:
             self._messages.append(message)
             return message
@@ -144,16 +143,16 @@ class ConversationContext:
         with self.lock:
             if not self._messages:
                 return None
-            return self._messages[-1]
+            return self._messages[-1].copy()
 
-    def update_message(self, new_message):
-        self._check_message(new_message)
-        assert "id" in new_message, "Message must have 'id' field"
+    def update_message(self, message):
+        self._check_message(message)
+        assert "id" in message, "Message must have 'id' field"
         with self.lock:
             for msg in self._messages:
-                if msg["id"] == new_message["id"]:
-                    msg.update(new_message)
-                    self._handle_context_changed()
+                if msg["id"] == message["id"]:
+                    msg.update(message)
+                    self._handle_context_changed(msg)
                     return True
             return False
 
@@ -168,7 +167,7 @@ class ConversationContext:
                         orig_content = msg["content"][0]["text"]
                         msg["content"][0]["text"] = orig_content[:int(len(orig_content) * percent)] + "... (interrupted)"
                         del msg["interrupted_at"], msg["audio_duration"] # don't process this message again
-                        msg["handled"] = False
+                        self._handle_context_changed(msg)
 
 
 class AgentConfigManager:
