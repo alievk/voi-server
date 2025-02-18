@@ -335,6 +335,9 @@ async def start_conversation(websocket, token_data):
                     conversation.on_user_image_url(metadata["image_url"])
                 elif message_type in ["create_response"]:
                     conversation.on_create_response()
+                    await safe_send(websocket, serialize_message({
+                        "type": "response_created"
+                    }))
                 elif message_type == "interrupt":
                     conversation.on_user_interrupt(
                         speech_id=int(metadata["speech_id"]), 
