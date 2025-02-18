@@ -124,7 +124,7 @@ class Conversation:
                 return
 
             self.conversation_context.process_interrupted_messages()
-            response = self.character_agent.completion(self.conversation_context)
+            response = await self.character_agent.acompletion(self.conversation_context)
 
             if isinstance(response, dict):
                 content = [{

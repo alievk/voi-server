@@ -203,7 +203,8 @@ class BaseLLMAgent:
     def __init__(self, 
         model_name, 
         system_prompt, 
-        examples=None
+        examples=None,
+        event_loop=None
     ):
         if isinstance(system_prompt, list):
             system_prompt = "\n".join(system_prompt)
@@ -218,13 +219,14 @@ class BaseLLMAgent:
         self.system_prompt = system_prompt
         self.examples = examples
         self._output_json = "json" in system_prompt.lower()
+        self._event_loop = event_loop or asyncio.get_running_loop()
 
     @property
     def output_json(self):
         return self._output_json
 
     @logger.catch(reraise=True)
-    def completion(self, context, stream=False, temperature=0.5):
+    async def acompletion(self, context, stream=False, temperature=0.5):
         assert hasattr(context, 'get_messages'), "Context must have get_messages method"
         assert not (stream and self.output_json), "Streamed JSON responses are not supported"
         
@@ -261,7 +263,7 @@ class BaseLLMAgent:
 
         logger.debug("LLM context:\n{}", self._messages_to_text(messages))
         
-        response = litellm.completion(
+        response = await litellm.acompletion(
             model=self.model_name, 
             messages=messages, 
             response_format={"type": "json_object"} if self.output_json else None,
@@ -286,6 +288,12 @@ class BaseLLMAgent:
                     content = json_parse_error_response
 
         return content
+
+    def completion(self, context, stream=False, temperature=0.5):
+        return asyncio.run_coroutine_threadsafe(
+            self.acompletion(context, stream, temperature),
+            self._event_loop
+        ).result()
 
     def llm_json_corrector(self, content):
         messages = [
@@ -352,17 +360,25 @@ class BaseLLMAgent:
 
 
 class CharacterLLMAgent(BaseLLMAgent):
-    def __init__(self, system_prompt, model_name="gpt-4o-mini", examples=None, greetings=None, control_agent=None):
+    def __init__(self, 
+        system_prompt, 
+        model_name="gpt-4o-mini", 
+        examples=None, 
+        greetings=None, 
+        control_agent=None, 
+        event_loop=None
+    ):
         super().__init__(
             model_name=model_name,
             system_prompt=system_prompt, 
-            examples=examples
+            examples=examples,
+            event_loop=event_loop
         )
         self.greetings = greetings
         self.control_agent = control_agent
 
     @staticmethod
-    def from_config(config):
+    def from_config(config, **kwargs):
         required_fields = ["llm_model", "system_prompt"]
         for field in required_fields:
             if field not in config:
@@ -380,7 +396,8 @@ class CharacterLLMAgent(BaseLLMAgent):
             model_name=config["llm_model"],
             examples=config.get("examples"),
             greetings=config.get("greetings"),
-            control_agent=control_agent
+            control_agent=control_agent,
+            **kwargs
         )
 
     def greeting_message(self):
@@ -406,16 +423,16 @@ class CharacterLLMAgent(BaseLLMAgent):
             "file": file
         }
 
-    def completion(self, context, stream=False, temperature=0.5):
+    async def acompletion(self, context, stream=False, temperature=0.5):
         assert self.control_agent is None or not stream, "Control agent does not support streaming"
 
         if self.control_agent is None:
-            return super().completion(context, stream, temperature)
+            return await super().acompletion(context, stream, temperature)
 
         temperature_schedule = self.control_agent.temperature_schedule(temperature)
         for i_try, temperature in enumerate(temperature_schedule):
             logger.debug("Control agent try {}/{}, temperature {:.2f}", i_try + 1, len(temperature_schedule), temperature)
-            response = super().completion(context, temperature=temperature)
+            response = await super().acompletion(context, temperature=temperature)
             if self.control_agent.classify(response):
                 return response
             logger.debug("Control agent denied response, increasing temperature")
@@ -430,10 +447,19 @@ class CharacterLLMAgent(BaseLLMAgent):
             logger.debug("Control agent giving up, using fallback response: {}", giveup_response)
         return response
 
+    def completion(self, context, stream=False, temperature=0.5):
+        return asyncio.run_coroutine_threadsafe(
+            self.acompletion(context, stream, temperature),
+            self._event_loop
+        ).result()
+
 
 class CharacterEchoAgent:
     def __init__(self, *args, **kwargs):
         pass
+
+    async def acompletion(self, context, stream=False, temperature=0.5):
+        return context.get_messages()[-1]["content"][0]["text"]
 
     def completion(self, context, stream=False, temperature=0.5):
         return context.get_messages()[-1]["content"][0]["text"]

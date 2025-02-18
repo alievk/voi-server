@@ -275,7 +275,7 @@ async def start_conversation(websocket, token_data):
     if agent_config["llm_model"] == "echo":
         character_agent = CharacterEchoAgent()
     else:
-        character_agent = CharacterLLMAgent.from_config(agent_config)
+        character_agent = CharacterLLMAgent.from_config(agent_config, event_loop=event_loop)
 
     conversation_context = ConversationContext(
         context_changed_cb=handle_context_changed,
