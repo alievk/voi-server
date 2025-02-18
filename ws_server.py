@@ -100,6 +100,7 @@ async def start_conversation(websocket, token_data):
     app_id = token_data["app"]
     user_speech_counter = 0
     assistant_speech_counter = 0
+    event_loop = asyncio.get_running_loop()
 
     log_dir = f"logs/conversations/{app_id}/{get_timestamp()}"
     logger.add(f"{log_dir}/server.log", rotation="100 MB")
@@ -255,7 +256,8 @@ async def start_conversation(websocket, token_data):
     voice_generator = AsyncVoiceGenerator(
         voice_generator, 
         generated_audio_cb=handle_generated_audio,
-        error_cb=voice_generator_error_handler
+        error_cb=voice_generator_error_handler,
+        event_loop=event_loop
     )
     voice_generator.start()
 
@@ -276,7 +278,8 @@ async def start_conversation(websocket, token_data):
         character_agent = CharacterLLMAgent.from_config(agent_config)
 
     conversation_context = ConversationContext(
-        context_changed_cb=handle_context_changed
+        context_changed_cb=handle_context_changed,
+        event_loop=event_loop
     )
     
     logger.info("Initializing conversation")
@@ -288,7 +291,8 @@ async def start_conversation(websocket, token_data):
         conversation_context=conversation_context,
         stream_user_stt=init_message.get("stream_user_stt", True),
         final_stt_correction=init_message.get("final_stt_correction", True),
-        error_cb=conversation_error_handler
+        error_cb=conversation_error_handler,
+        event_loop=event_loop
     )
 
     logger.info("Initializing audio saver")

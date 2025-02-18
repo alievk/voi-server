@@ -60,10 +60,10 @@ def model_supports_json_output(model_name):
 
 
 class ConversationContext:
-    def __init__(self, context_changed_cb=None):
+    def __init__(self, context_changed_cb=None, event_loop=None):
         self.context_changed_cb = context_changed_cb
         self.lock = threading.Lock()
-        self._event_loop = asyncio.get_event_loop()
+        self._event_loop = event_loop or asyncio.get_running_loop()
         self._messages = []
 
     def _handle_context_changed(self, message):

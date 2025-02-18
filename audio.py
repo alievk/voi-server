@@ -146,7 +146,8 @@ class AudioInputStream:
         output_chunk_size_ms=1000, 
         input_sample_rate=16000, 
         output_sample_rate=16000,
-        input_format="webm"
+        input_format="webm",
+        event_loop=None
     ):
         """
         Converts webm/mp4/ogg/pcm16 to f32le.
@@ -160,6 +161,7 @@ class AudioInputStream:
         self.converted_audio_cb = converted_audio_cb
         self.output_chunk_size = int(output_chunk_size_ms / 1000 * self.output_sample_rate * 2)
         self.input_format = input_format
+        self._event_loop = event_loop or asyncio.get_running_loop()
         self.running = False
         self.threads = []
 
@@ -169,7 +171,7 @@ class AudioInputStream:
 
         self.threads = [
             threading.Thread(target=self._buffering, name='buffering', daemon=True),
-            threading.Thread(target=self._audio_callback, name='audio-callback', daemon=True, args=(asyncio.get_event_loop(),))
+            threading.Thread(target=self._audio_callback, name='audio-callback', daemon=True)
         ]
 
         if self.input_format != "pcm16":
@@ -219,16 +221,16 @@ class AudioInputStream:
 
         self.output_queue.put(None)
 
-    def _audio_callback(self, loop):
+    def _audio_callback(self):
         while self.running:
             s16le_chunk = self.output_queue.get()
             if s16le_chunk is None:
                 break
 
             f32le_chunk = convert_s16le_to_f32le(s16le_chunk)
-            asyncio.run_coroutine_threadsafe(self.converted_audio_cb(f32le_chunk), loop)
+            asyncio.run_coroutine_threadsafe(self.converted_audio_cb(f32le_chunk), self._event_loop)
 
-        asyncio.run_coroutine_threadsafe(self.converted_audio_cb(None), loop)
+        asyncio.run_coroutine_threadsafe(self.converted_audio_cb(None), self._event_loop)
 
     def _start_ffmpeg_process(self):
         return subprocess.Popen([
@@ -266,14 +268,15 @@ class AudioOutputStream:
         converted_audio_cb, 
         input_sample_rate=16000, 
         output_sample_rate=16000,
-        output_format="webm"
+        output_format="webm",
+        event_loop=None
     ):
         """
         Asyncronous f32le to webm/mp4/ogg conversion.
         """
         assert output_format in ["webm", "mp4", "ogg"]
         self.converted_audio_cb = converted_audio_cb
-        self._event_loop = asyncio.get_event_loop()
+        self._event_loop = event_loop or asyncio.get_running_loop()
 
         self.ffmpeg_process = None
         self.out_audio_thread = None

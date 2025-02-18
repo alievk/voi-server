@@ -17,7 +17,8 @@ class Conversation:
         conversation_context,
         stream_user_stt: bool = True,
         final_stt_correction: bool = True,
-        error_cb=None
+        error_cb=None,
+        event_loop=None
     ):
         self.audio_input_stream = audio_input_stream
         self.online_asr = asr
@@ -33,7 +34,7 @@ class Conversation:
 
         self._stt_finished = asyncio.Event()
         self._stt_finished.set()
-        self._event_loop = asyncio.get_event_loop()
+        self._event_loop = event_loop or asyncio.get_running_loop()
 
     def greeting(self):
         message = self.character_agent.greeting_message()

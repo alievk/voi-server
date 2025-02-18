@@ -259,7 +259,8 @@ class AsyncVoiceGenerator:
         self, 
         voice_generator, 
         generated_audio_cb, 
-        error_cb=None
+        error_cb=None,
+        event_loop=None
     ):
         """ 
         generated_audio_cb receives f32le audio chunks 
@@ -269,7 +270,7 @@ class AsyncVoiceGenerator:
         self.error_cb = error_cb
         self.running = False
         self.text_queue = None
-        self._event_loop = asyncio.get_event_loop()
+        self._event_loop = event_loop or asyncio.get_running_loop()
 
     def generate(self, text, id=None):
         if not self.running:
