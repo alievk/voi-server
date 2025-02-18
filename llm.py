@@ -5,6 +5,7 @@ from datetime import datetime
 import litellm
 import random
 import asyncio
+import copy
 from loguru import logger
 
 from text import SentenceStream
@@ -127,7 +128,7 @@ class ConversationContext:
     def get_messages(self, include_fields=None, filter=None, processor=None):
         with self.lock:
             if include_fields is None:
-                messages = self._messages.copy()
+                messages = copy.deepcopy(self._messages)
             else:
                 messages = [{k: v for k, v in msg.items() if k in include_fields} for msg in self._messages]
 
@@ -143,7 +144,7 @@ class ConversationContext:
         with self.lock:
             if not self._messages:
                 return None
-            return self._messages[-1].copy()
+            return copy.deepcopy(self._messages[-1])
 
     def update_message(self, message):
         self._check_message(message)
@@ -151,8 +152,10 @@ class ConversationContext:
         with self.lock:
             for msg in self._messages:
                 if msg["id"] == message["id"]:
+                    context_changed = str(msg["content"]) != str(message["content"])
                     msg.update(message)
-                    self._handle_context_changed(msg)
+                    if context_changed:
+                        self._handle_context_changed(msg)
                     return True
             return False
 
