@@ -109,9 +109,7 @@ class Conversation:
         self.user_attachments.append(content)
 
     def on_create_response(self):
-        logger.debug("Creating response")
         asyncio.run_coroutine_threadsafe(self._create_response(), self._event_loop)
-        logger.debug("Response created")
 
     async def _create_response(self):
         try:
