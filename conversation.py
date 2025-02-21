@@ -110,6 +110,7 @@ class Conversation:
         self.user_attachments.append(content)
 
     def on_create_response(self):
+        self.voice_generator.interrupt()
         asyncio.run_coroutine_threadsafe(self._create_response(), self._event_loop)
 
     async def _create_response(self):
@@ -190,6 +191,7 @@ class Conversation:
         self.conversation_context.update_message(message)
 
     def on_user_interrupt(self, speech_id, interrupted_at):
+        self.voice_generator.interrupt()
         messages = self.conversation_context.get_messages(filter=lambda msg: msg["role"] == "assistant" and msg["id"] == speech_id)
         assert messages, f"Message with speech_id {speech_id} not found"
         message = messages[0]
