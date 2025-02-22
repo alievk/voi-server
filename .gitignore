@@ -16,6 +16,7 @@ env/
 
 # Jupyter Notebooks
 .ipynb_checkpoints/
+notebooks/*.ipynb
 
 # Logs
 *.log

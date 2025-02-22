@@ -20,6 +20,7 @@ Voi is a free and open source backend for realtime voice agents. Check the JS [c
     - [Agents](#agents)
     - [Run the server](#run-the-server)
   - [Access tokens](#access-tokens)
+  - [Roadmap] (#roadmap)
   - [Philosophy](#philosophy)
   - [Contribution](#contribution)
   - [License](#license)
@@ -262,6 +263,7 @@ Here you can set any number of `n_days` when your token will expire.
 ## Roadmap
 
 - [x] Make it open source
+- [x] Support for user images
 - [ ] Incoming calls
   - [ ] Context gathering: understand user's problem
   - [ ] Function calling: add external actuators like DB inquiry

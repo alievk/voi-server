@@ -28,7 +28,7 @@ class VoiceGenerator:
         model_name=None,
         voice=None,
         cached=False,
-        voice_speed=1.0,
+        voice_speed=None,
         leading_silence=None,
         trailing_silence=None
     ):
@@ -38,7 +38,7 @@ class VoiceGenerator:
         self.model_name = "multispeaker_original" if model_name is None else model_name
         self.language = 'en'
         self.tts_temperature = 0.7
-        self.speed = voice_speed
+        self.speed = voice_speed if voice_speed is not None else 1.0
         self.leading_silence = 0.0 if leading_silence is None else leading_silence
         self.trailing_silence = 0.0 if trailing_silence is None else trailing_silence
 
@@ -106,8 +106,7 @@ class VoiceGenerator:
             "model_name": model_name,
             "model": model,
             "voices": voices,
-            "avg_text_len": model_config["avg_text_len"],
-            "speed": model_config.get("speed", 1.0)
+            "avg_text_len": model_config["avg_text_len"]
         }
         if "voice_tone_map" in model_config:
             model_params["voice_tone_map"] = model_config["voice_tone_map"]
@@ -196,6 +195,7 @@ class MultiVoiceGenerator:
                 voice=params.get("voice"),
                 leading_silence=params.get("leading_silence"),
                 trailing_silence=params.get("trailing_silence"),
+                voice_speed=params.get("speed"),
                 cached=cached,
             )
 
@@ -259,7 +259,8 @@ class AsyncVoiceGenerator:
         self, 
         voice_generator, 
         generated_audio_cb, 
-        error_cb=None
+        error_cb=None,
+        event_loop=None
     ):
         """ 
         generated_audio_cb receives f32le audio chunks 
@@ -269,11 +270,14 @@ class AsyncVoiceGenerator:
         self.error_cb = error_cb
         self.running = False
         self.text_queue = None
-        self._event_loop = asyncio.get_event_loop()
+        self._interrupt_flag = False
+        self._generating = False
+        self._event_loop = event_loop or asyncio.get_running_loop()
 
     def generate(self, text, id=None):
         if not self.running:
             raise RuntimeError("AsyncVoiceGenerator is not running")
+        self.interrupt()
         self.text_queue.put({"text": text, "id": id})
 
     def start(self):
@@ -288,7 +292,19 @@ class AsyncVoiceGenerator:
         self.thread.join(timeout=5)
         self.text_queue = None
 
+    def interrupt(self):
+        if self._generating:
+            self._interrupt_flag = True
+
     def _processing_loop(self):
+        def need_interrupt(text, id):
+            interrupt_flag = self._interrupt_flag
+            self._interrupt_flag = False
+            if interrupt_flag or not self.running:
+                logger.debug(f"Interrupting generation for text: {text}, id: {id}.")
+                return True
+            return False
+
         try:
             while self.running:
                 item = self.text_queue.get()
@@ -297,6 +313,9 @@ class AsyncVoiceGenerator:
 
                 text, id = item["text"], item["id"]
 
+                logger.debug(f"Generating audio for text: {text}, id: {id}")
+
+                self._generating = True
                 if text.startswith("file:"):
                     stream = FakeAudioStream(text[5:], chunk_length=0.1, sr=self.sample_rate)
                     duration = stream.duration
@@ -305,6 +324,8 @@ class AsyncVoiceGenerator:
                             self.generated_audio_cb(audio_chunk=chunk, speech_id=id), 
                             self._event_loop
                         )
+                        if need_interrupt(text, id):
+                            break
                 else:
                     duration = 0.0
                     for chunk in self.voice_generator.generate(text, streaming=True):
@@ -313,8 +334,9 @@ class AsyncVoiceGenerator:
                             self._event_loop
                         )
                         duration += len(chunk) / self.voice_generator.sample_rate
-                        if not self.running or not self.text_queue.empty():
+                        if need_interrupt(text, id):
                             break
+                self._generating = False
 
                 asyncio.run_coroutine_threadsafe(
                     self.generated_audio_cb(audio_chunk=None, speech_id=id, duration=duration),

@@ -16,9 +16,10 @@ import torch
 from recognition import OnlineASR
 from generation import MultiVoiceGenerator, DummyVoiceGenerator, AsyncVoiceGenerator
 from audio import AudioInputStream, WavGroupSaver, convert_f32le_to_s16le, convert_s16le_to_ogg
-from llm import agent_config_manager, ConversationContext, BaseLLMAgent, CharacterLLMAgent, CharacterEchoAgent, voice_tone_emoji
+from llm import AgentConfigManager, ConversationContext, BaseLLMAgent, CharacterLLMAgent, CharacterEchoAgent, voice_tone_emoji
 from conversation import Conversation
 from token_generator import generate_token, TOKEN_SECRET_KEY
+from image import blob_to_image
 
 os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
 torch.backends.cudnn.benchmark = False
@@ -34,6 +35,13 @@ def serialize_message(metadata, blob=None):
         return metadata_length + metadata
     else:
         return metadata_length + metadata + blob
+
+
+def deserialize_message(data):
+    metadata_length = int.from_bytes(data[:4], byteorder='big')
+    metadata = json.loads(data[4:4+metadata_length].decode('utf-8'))
+    blob = data[4+metadata_length:] if len(data) > 4+metadata_length else None
+    return metadata, blob
 
 
 async def safe_send(websocket, message, fatal=False):
@@ -92,6 +100,7 @@ async def start_conversation(websocket, token_data):
     app_id = token_data["app"]
     user_speech_counter = 0
     assistant_speech_counter = 0
+    event_loop = asyncio.get_running_loop()
 
     log_dir = f"logs/conversations/{app_id}/{get_timestamp()}"
     logger.add(f"{log_dir}/server.log", rotation="100 MB")
@@ -116,25 +125,15 @@ async def start_conversation(websocket, token_data):
             user_audio_saver.write(audio_chunk, f"user_{user_speech_counter}.wav")
 
     @logger.catch(reraise=True)
-    async def handle_context_changed(context):
-        messages = context.get_messages(filter=lambda msg: not msg["handled"])
-        for msg in messages:
-            data = {
-                "type": "message",
-                "role": msg["role"],
-                "time": msg["time"].strftime("%H:%M:%S"),
-                "id": msg["id"],
-                "from": msg.get("from", "text")
-            }
-            if isinstance(msg["content"], dict):
-                data["content"] = msg["content"]["text"]
-                data["sentiment"] = voice_tone_emoji(msg["content"]["voice_tone"])
-            else:
-                data["content"] = msg["content"]
-
-            logger.info("Sending message: {}", data)
-            await safe_send(websocket, serialize_message(data))
-            context.update_message(msg["id"], handled=True)
+    async def handle_context_changed(message):
+        data = {
+            "type": "message",
+            "role": message["role"],
+            "content": message["content"],
+            "id": message["id"]
+        }
+        logger.info("Sending message: {}", data)
+        await safe_send(websocket, serialize_message(data))
 
     @logger.catch(reraise=True)
     async def handle_generated_audio(audio_chunk, speech_id, duration=None):
@@ -185,7 +184,8 @@ async def start_conversation(websocket, token_data):
             "agent_name"
         ]
 
-        init_message = await websocket.receive_json()
+        message = await websocket.receive()
+        init_message, _ = deserialize_message(message["bytes"])
         logger.info("Received init message: {}", init_message)
 
         for field in init_message:
@@ -215,7 +215,10 @@ async def start_conversation(websocket, token_data):
                 model_name=message_data["model"],
                 system_prompt=message_data["prompt"]
             )
-            context = ConversationContext(messages=message_data["messages"])
+            context = ConversationContext()
+            for msg in message_data["messages"]:
+                msg["content"] = [{"type": "text", "text": msg["content"]}]
+                context.add_message(msg)
             llm_response = agent.completion(context)
             message = {
                 "type": "llm_response",
@@ -237,6 +240,7 @@ async def start_conversation(websocket, token_data):
         cached=True
     )
 
+    agent_config_manager = AgentConfigManager()
     if init_message.get("agent_config"):
         agent_config_manager.add_agent(init_message["agent_name"], json.loads(init_message["agent_config"]))
     agent_config = agent_config_manager.get_config(init_message["agent_name"])
@@ -252,7 +256,8 @@ async def start_conversation(websocket, token_data):
     voice_generator = AsyncVoiceGenerator(
         voice_generator, 
         generated_audio_cb=handle_generated_audio,
-        error_cb=voice_generator_error_handler
+        error_cb=voice_generator_error_handler,
+        event_loop=event_loop
     )
     voice_generator.start()
 
@@ -270,21 +275,24 @@ async def start_conversation(websocket, token_data):
     if agent_config["llm_model"] == "echo":
         character_agent = CharacterEchoAgent()
     else:
-        character_agent = CharacterLLMAgent.from_config(agent_config)
+        character_agent = CharacterLLMAgent.from_config(agent_config, event_loop=event_loop)
 
     conversation_context = ConversationContext(
-        context_changed_cb=handle_context_changed
+        context_changed_cb=handle_context_changed,
+        event_loop=event_loop
     )
     
     logger.info("Initializing conversation")
     conversation = Conversation(
+        audio_input_stream=audio_input_stream,
         asr=asr,
         voice_generator=voice_generator,
         character_agent=character_agent,
         conversation_context=conversation_context,
         stream_user_stt=init_message.get("stream_user_stt", True),
         final_stt_correction=init_message.get("final_stt_correction", True),
-        error_cb=conversation_error_handler
+        error_cb=conversation_error_handler,
+        event_loop=event_loop
     )
 
     logger.info("Initializing audio saver")
@@ -318,26 +326,28 @@ async def start_conversation(websocket, token_data):
             break
         
         if "bytes" in message:
-            if not audio_input_stream.is_running():
-                audio_input_stream.start()
-            audio_input_stream.put(message["bytes"])
-        else:
             try:
-                message_data = json.loads(message["text"])
-                message_type = message_data["type"]
-                logger.debug(f"Received message: {message_data}")
-                if message_type == "start_recording":
-                    audio_input_stream.start()
-                elif message_type in ["create_response", "stop_recording"]:
-                    audio_input_stream.stop()
-                elif message_type == "manual_text":
-                    conversation.on_manual_text(message_data["content"])
+                metadata, blob = deserialize_message(message["bytes"])
+                message_type = metadata["type"]
+                logger.debug(f"Received message: {metadata}")
+
+                if message_type == "audio":
+                    conversation.on_user_audio(blob)
+                elif message_type == "text":
+                    conversation.on_user_text(metadata["content"])
+                elif message_type == "image_url":
+                    conversation.on_user_image_url(metadata["image_url"])
+                elif message_type in ["create_response"]:
+                    conversation.on_create_response()
+                    await safe_send(websocket, serialize_message({
+                        "type": "response_created"
+                    }))
                 elif message_type == "interrupt":
                     conversation.on_user_interrupt(
-                        speech_id=int(message_data["speech_id"]), 
-                        interrupted_at=message_data["interrupted_at"])
+                        speech_id=int(metadata["speech_id"]), 
+                        interrupted_at=metadata["interrupted_at"])
                 elif message_type == "invoke_llm":
-                    asyncio.run_coroutine_threadsafe(invoke_llm(message_data), asyncio.get_running_loop())
+                    asyncio.run_coroutine_threadsafe(invoke_llm(metadata), asyncio.get_running_loop())
                 else:
                     e = f"Message type {message_type} is not supported"
                     logger.warning(e)
@@ -346,6 +356,8 @@ async def start_conversation(websocket, token_data):
                 e = f"Error processing client message: {e}. Message: {message}"
                 logger.error(e)
                 await send_error(websocket, e)
+        else:
+            logger.warning(f"Received text message: {message['text']}")
 
     logger.info("Cleaning up resources")
     voice_generator.stop()
