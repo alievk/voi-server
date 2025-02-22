@@ -5,6 +5,7 @@
 Voi is a free and open source backend for realtime voice agents. Check the JS [client](https://github.com/alievk/voi-js-client).
 
 # Table of Contents
+- [News](#news)
 - [Requirements](#requirements)
   - [Hardware](#hardware)
   - [Software](#software)
@@ -20,10 +21,15 @@ Voi is a free and open source backend for realtime voice agents. Check the JS [c
     - [Agents](#agents)
     - [Run the server](#run-the-server)
   - [Access tokens](#access-tokens)
-  - [Roadmap] (#roadmap)
+  - [Roadmap](#roadmap)
   - [Philosophy](#philosophy)
   - [Contribution](#contribution)
   - [License](#license)
+
+## News
+
+- 02/10/2025 - Voi is open source 🎉
+- 02/22/2025 - Added user images support
 
 ## Requirements
 
