@@ -3,6 +3,9 @@ import nltk
 import re
 
 
+NARRATOR_MARKER = "@"
+
+
 def split_text_into_chunks(text, avg_text_len=60):
     chunks = []
     buffer = ""
@@ -31,11 +34,11 @@ def split_text_into_chunks(text, avg_text_len=60):
     return chunks
 
 
-def split_text_into_speech_segments(text, avg_text_len=60):
+def split_text_into_speech_segments(text, avg_text_len=60, narrator_marker=NARRATOR_MARKER):
     """
     Return list of speech segments with text and role.
     Role is either "narrator" or "character".
-    Narrator is the text between * and *, the rest is character.
+    Narrator is the text between narrator_marker, the rest is character.
     """
     def process_chunk(chunk, role):
         if not chunk:
@@ -55,10 +58,11 @@ def split_text_into_speech_segments(text, avg_text_len=60):
     parts = []
     last_end = 0
     
-    for match in re.finditer(r"\*([^*]+)\*[.,!?]?", text):
+    pattern = rf"\{narrator_marker}([^{narrator_marker}]+)\{narrator_marker}[.,!?]?"
+    for match in re.finditer(pattern, text):
         # Process character text before narrator text
         parts.extend(process_chunk(text[last_end:match.start()], "character"))
-        # Process narrator text
+        # Process narrator text 
         parts.extend(process_chunk(match.group(1), "narrator"))
         last_end = match.end()
     

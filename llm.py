@@ -8,7 +8,7 @@ import asyncio
 import copy
 from loguru import logger
 
-from text import SentenceStream
+from text import SentenceStream, NARRATOR_MARKER
 
 
 voice_tone_description = """<character voice tone> is used by the voice generator to choose the appropriate voice and intonation for <character response text>.
@@ -20,12 +20,12 @@ voice_tone_description = """<character voice tone> is used by the voice generato
   - "sad": conversation is sad, like a sad story or a sad conversation
 """
 
-narrator_comment_format_description = """<character response text> contains comments made by the narrator.
-The comments are always in the third person and enclosed in asterisks.
+narrator_comment_format_description = f"""<character response text> contains comments made by the narrator.
+The comments are always in the third person and enclosed in {NARRATOR_MARKER}.
 Examples:
-  - Are you serious?! *her eyes widened* How are you going to do that?
-  - *he looks down* I'm not sure I can do that.
-  - I'm glad you're here. *she rushed to hug him*
+  - Are you serious?! {NARRATOR_MARKER}her eyes widened{NARRATOR_MARKER} How are you going to do that?
+  - {NARRATOR_MARKER}he looks down{NARRATOR_MARKER} I'm not sure I can do that.
+  - I'm glad you're here. {NARRATOR_MARKER}she rushed to hug him{NARRATOR_MARKER}
 """
 
 character_agent_message_format_voice_tone = (
