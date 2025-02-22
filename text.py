@@ -34,18 +34,29 @@ def split_text_into_chunks(text, avg_text_len=60):
     return chunks
 
 
+def normalize_text(text):
+    text = text.strip()
+    text = text.replace('"', '')
+    text = text.replace("'", '')
+    text = text.replace("`", '')
+    text = text.replace("*", '')
+    return text
+
+
 def split_text_into_speech_segments(text, avg_text_len=60, narrator_marker=NARRATOR_MARKER):
     """
     Return list of speech segments with text and role.
     Role is either "narrator" or "character".
     Narrator is the text between narrator_marker, the rest is character.
     """
-    def process_chunk(chunk, role):
-        if not chunk:
+    def process_segment(segment, role):
+        if not segment:
             return []
+
+        segment = normalize_text(segment)
         
         parts = []
-        for segment in split_text_into_chunks(chunk.strip(), avg_text_len):
+        for segment in split_text_into_chunks(segment, avg_text_len):
             if not any(c.isalpha() for c in segment):
                 continue
                 
@@ -61,13 +72,13 @@ def split_text_into_speech_segments(text, avg_text_len=60, narrator_marker=NARRA
     pattern = rf"\{narrator_marker}([^{narrator_marker}]+)\{narrator_marker}[.,!?]?"
     for match in re.finditer(pattern, text):
         # Process character text before narrator text
-        parts.extend(process_chunk(text[last_end:match.start()], "character"))
+        parts.extend(process_segment(text[last_end:match.start()], "character"))
         # Process narrator text 
-        parts.extend(process_chunk(match.group(1), "narrator"))
+        parts.extend(process_segment(match.group(1), "narrator"))
         last_end = match.end()
     
     # Process remaining character text
-    parts.extend(process_chunk(text[last_end:], "character"))
+    parts.extend(process_segment(text[last_end:], "character"))
     
     return parts
 
