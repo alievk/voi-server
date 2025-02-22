@@ -259,6 +259,18 @@ python3 token_generator.py your_app --expire n_days
 ```
 Here you can set any number of `n_days` when your token will expire.
 
+## Roadmap
+
+- [x] Make it open source
+- [ ] Incoming calls
+  - [ ] Context gathering: understand user's problem
+  - [ ] Function calling: add external actuators like DB inquiry
+  - [ ] Turn detection: detect a moment when agent can start to speak
+  - [ ] Add a call-center-like voice
+- [ ] WebRTC support
+- [ ] VoIP support
+- [ ] Outcoming calls
+
 ## Philosophy
 Realtime conversation with a human is a really complex task, as it requires from the agent an empathy, competence and speed. If you lack a single piece of these, your agent is useless. That's why making a good voice agent is not just stacking a bunch of APIs together. You have to develop it very carefully, making a small step, then testing, making a small step, then testing...  
 
@@ -270,7 +282,7 @@ While open sourcing Voi, I realized many people could use it for learning softwa
 You are welcome to open PRs with bug fixes, new features and documentation improvements.
 
 Or you can just buy me a coffee and I will convert it to code!  
-[![Buy Me A Coffee](https://www.buymeacoffee.com/assets/img/custom_images/orange_img.png)](buymeacoffee.com/alievk)
+[![Buy Me A Coffee](https://www.buymeacoffee.com/assets/img/custom_images/orange_img.png)](https://buymeacoffee.com/alievk)
 
 ## License
 Voi uses the MIT license, which basically means you can do anything with it, free of charge. However, the dependencies may have different licenses. Check them if you care.
