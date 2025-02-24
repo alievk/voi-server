@@ -352,9 +352,9 @@ class BaseLLMAgent:
         return ""
 
     def _messages_to_text(self, messages):
-        def truncate_content(content, max_length=100):
-            if isinstance(content, str):
-                return content[:max_length] + "..." if len(content) > max_length else content
+        def truncate_content(content, max_image_length=100):
+            if isinstance(content, str) and content.startswith("data:image"):
+                return content[:max_image_length] + "..." if len(content) > max_image_length else content
             if isinstance(content, dict):
                 return {k: truncate_content(v) for k, v in content.items()}
             if isinstance(content, list):
