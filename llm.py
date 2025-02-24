@@ -28,18 +28,20 @@ Examples:
   - I'm glad you're here. {NARRATOR_MARKER}she rushed to hug him{NARRATOR_MARKER}
 """
 
-character_agent_message_format_voice_tone = (
-    "Respond with the following JSON object:"
-    '{"text": "<character response text>", "voice_tone": "<character voice tone>"}'
-    f"\n{voice_tone_description}"
-)
+prompt_patterns = {
+    "character_agent_message_format_voice_tone": (
+        "Respond with the following JSON object:"
+        '{"text": "<character response text>", "voice_tone": "<character voice tone>"}'
+        f"\n{voice_tone_description}"
+    ),
 
-character_agent_message_format_narrator_comments = (
-    "Respond with the following JSON object:"
-    '{"text": "<character response text>", "voice_tone": "<character voice tone>"}'
-    f"\n{voice_tone_description}"
-    f"\n{narrator_comment_format_description}"
-)
+    "character_agent_message_format_narrator_comments": (
+        "Respond with the following JSON object:"
+        '{"text": "<character response text>", "voice_tone": "<character voice tone>"}'
+        f"\n{voice_tone_description}"
+        f"\n{narrator_comment_format_description}"
+    )
+}
 
 json_parse_error_response = {"text": "Sorry, I was lost in thought. Can you repeat that?", "voice_tone": "neutral"}
 
@@ -212,8 +214,8 @@ class BaseLLMAgent:
         if isinstance(system_prompt, list):
             system_prompt = "\n".join(system_prompt)
 
-        system_prompt = system_prompt.replace("{character_agent_message_format_voice_tone}", character_agent_message_format_voice_tone)
-        system_prompt = system_prompt.replace("{character_agent_message_format_narrator_comments}", character_agent_message_format_narrator_comments)
+        for pattern_name, pattern in prompt_patterns.items():
+            system_prompt = system_prompt.replace(f"{{prompt_pattern:{pattern_name}}}", pattern)
 
         # force litellm to use OpenAI API if no provider is specified
         model_name = f"openai/{model_name}" if "/" not in model_name else model_name
