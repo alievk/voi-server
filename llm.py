@@ -178,7 +178,7 @@ class ConversationContext:
 class AgentConfigManager:
     def __init__(self):
         self._agent_list = self._load_agent_list()
-        self._resolve_nested_agents()
+        self._resolve_refs()
 
     def _load_agent_list(self):
         agent_list = {}
@@ -188,15 +188,39 @@ class AgentConfigManager:
                     agent_list.update(json.load(f))
         return agent_list
 
-    def _resolve_nested_agents(self):
+    def _resolve_refs(self):
+        # resolve nested agents
         for agent_name, agent_config in self._agent_list.items():
             for key, value in agent_config.items():
                 if key.endswith("_agent") and isinstance(value, str):
                     self._agent_list[agent_name][key] = self._agent_list[value]
 
+        def resolve(value, vars=None):
+            if isinstance(value, list):
+                return [resolve(v, vars) for v in value]
+            elif isinstance(value, dict) and "content" in value:
+                return resolve(value["content"], vars)
+
+            for pattern_name, pattern in prompt_patterns.items():
+                value = value.replace(f"{{prompt_pattern:{pattern_name}}}", pattern)
+
+            if vars:
+                for k, v in vars.items():
+                    value = value.replace(f"{{vars:{k}}}", str(v))
+
+            return value
+
+        for c in self._agent_list.values():
+            if "system_prompt" in c:
+                c["system_prompt"] = resolve(c["system_prompt"], c.get("vars"))
+            if "examples" in c:
+                c["examples"] = resolve(c["examples"], c.get("vars"))
+            if "greetings" in c:
+                c["greetings"]["choices"] = resolve(c["greetings"]["choices"], c.get("vars"))
+
     def add_agent(self, agent_name, agent_config):
         self._agent_list[agent_name] = agent_config
-        self._resolve_nested_agents()
+        self._resolve_refs()
 
     def get_config(self, agent_name):
         if agent_name not in self._agent_list:
@@ -213,9 +237,6 @@ class BaseLLMAgent:
     ):
         if isinstance(system_prompt, list):
             system_prompt = "\n".join(system_prompt)
-
-        for pattern_name, pattern in prompt_patterns.items():
-            system_prompt = system_prompt.replace(f"{{prompt_pattern:{pattern_name}}}", pattern)
 
         # force litellm to use OpenAI API if no provider is specified
         model_name = f"openai/{model_name}" if "/" not in model_name else model_name
