@@ -163,8 +163,8 @@ class OfflineASR:
             device=device, 
             compute_type="float16", 
             language=language,
+            asr_options={"suppress_numerals": True}
             # vad_options={'vad_onset': 0.8, 'vad_offset': 0.8}
-            # asr_options={"initial_prompt": "He thoughtfully said: "}
         )
 
         align_model, align_metadata = whisperx.load_align_model(
