@@ -106,6 +106,7 @@ class FakeAudioStream:
         """
         - chunk_length: length of the chunk to read in seconds
         - duration: maximum duration of the audio to read in seconds
+        - sr: target sample rate
         """
         self.audio, self.sr = load_audio(filename, sr=sr, duration=duration)
         self.duration = self.audio.shape[0] / self.sr
