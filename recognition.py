@@ -170,7 +170,7 @@ class OfflineASR:
         align_model, align_metadata = whisperx.load_align_model(
             language_code=language, 
             device=device, 
-            model_name="WAV2VEC2_ASR_LARGE_LV60K_960H"
+            model_name="WAV2VEC2_ASR_LARGE_LV60K_960H" if language == "en" else None
         )
 
         OfflineASR._cached_model_params = {
