@@ -11,6 +11,7 @@ class Conversation:
     def __init__(
         self, 
         audio_input_stream,
+        vad,
         asr: OnlineASR, 
         voice_generator,
         character_agent,
@@ -18,20 +19,24 @@ class Conversation:
         stream_user_stt: bool = True,
         final_stt_correction: bool = True,
         error_cb=None,
+        status_cb=None,
         event_loop=None
     ):
         self.audio_input_stream = audio_input_stream
+        self.vad = vad
         self.online_asr = asr
         self.offline_asr = asr.asr
-        self.user_audio_buffer = AudioBuffer(min_duration=0.1, max_duration=60)
+        self.user_audio_buffer = AudioBuffer(min_duration=1.0, max_duration=60)
         self.voice_generator = voice_generator
         self.character_agent = character_agent
         self.conversation_context = conversation_context
         self.stream_user_stt = stream_user_stt
         self.final_stt_correction = final_stt_correction
         self.error_cb = error_cb
+        self.status_cb = status_cb
         self.user_attachments = []
 
+        self._last_speech_text = ""
         self._stt_finished = asyncio.Event()
         self._stt_finished.set()
         self._event_loop = event_loop or asyncio.get_running_loop()
@@ -52,45 +57,52 @@ class Conversation:
     async def handle_input_audio(self, audio_chunk):
         """ audio_chunk is f32le """
         end_of_audio = audio_chunk is None
-        asr_result = None
 
+        STT_SILENCE_THRESHOLD = 0.2
+
+        last_message = self.conversation_context.last_message()        
+
+        def transcribe_audio_buffer(audio_buffer):
+            if self._last_speech_text:
+                cond_text = self._last_speech_text + ' '
+            elif last_message and last_message["role"] == "assistant":
+                cond_text = f"- {last_message['content'][0]['text']}\n- "
+            else:
+                cond_text = "He thoughtfuly said: "
+            logger.debug(f"Conditioning ASR with: {cond_text}")
+            words = self.offline_asr.transcribe(audio_buffer, cond_text)
+            return Word.to_text(words)
+
+        buffer_text = None
         if end_of_audio:
-            if self.stream_user_stt:
-                # we need to finalize the online asr even if we don't use the result
-                asr_result = self.online_asr.process_chunk(audio_chunk, finalize=True)
-
-            if self.final_stt_correction and not self.user_audio_buffer.empty():
-                logger.debug("Performing final stt correction")
-                words = self.offline_asr.transcribe(self.user_audio_buffer.buffer)
-                text = Word.to_text(words)
-
-                logger.debug(f"Final stt correction: {text}")
-                asr_result = {
-                    "confirmed_text": text,
-                    "unconfirmed_text": "",
-                }
-
-            self.user_audio_buffer.clear()
+            audio_buffer, _ = self.user_audio_buffer.clear()
+            buffer_text = transcribe_audio_buffer(audio_buffer)
+            self.vad.reset()
         else:
-            if self.stream_user_stt:
-                asr_result = self.online_asr.process_chunk(audio_chunk)
+            silence_duration = self.vad.process_chunk(audio_chunk)
+            audio_buffer, _ = self.user_audio_buffer.push(audio_chunk)
 
-            self.user_audio_buffer.push(audio_chunk)
+            if self.stream_user_stt and silence_duration > STT_SILENCE_THRESHOLD and audio_buffer is not None:
+                buffer_text = transcribe_audio_buffer(audio_buffer)
+                self.user_audio_buffer.clear()
+                self.vad.reset()
 
-        if asr_result and (asr_result["confirmed_text"] or asr_result["unconfirmed_text"]):
-            text = asr_result["confirmed_text"] or asr_result["unconfirmed_text"] or "..."
-            last_message = self.conversation_context.last_message()
+        if buffer_text:
+            speech_text = self._last_speech_text + ' ' + buffer_text
+            self._last_speech_text = speech_text
+
             if last_message and last_message["role"] == "user":
-                last_message["content"][0]["text"] = text
+                last_message["content"][0]["text"] = speech_text
                 self.conversation_context.update_message(last_message)
             else:
                 message = {
                     "role": "user",
-                    "content": [{"type": "text", "text": text}]
+                    "content": [{"type": "text", "text": speech_text}]
                 }
                 self.conversation_context.add_message(message)
 
         if end_of_audio:
+            self._last_speech_text = ""
             self._stt_finished.set()
 
     def on_user_text(self, text):
@@ -121,7 +133,8 @@ class Conversation:
 
             messages = self.conversation_context.get_messages()
             if not messages or messages[-1]["role"] != "user":
-                logger.debug("No need to respond")
+                logger.info("The last message is not a user message, skipping response")
+                self.emit_status('response_cancelled')
                 return
 
             self.conversation_context.process_interrupted_messages()
@@ -148,6 +161,8 @@ class Conversation:
             new_message = self.conversation_context.add_message(message)
 
             self._generate_voice(new_message)
+
+            self.emit_status('response_done')
         except Exception as e:
             self.emit_error(e)
             raise e
@@ -165,6 +180,10 @@ class Conversation:
                 }
                 self.conversation_context.add_message(message)
         self.user_attachments = []
+
+    def emit_status(self, status):
+        if self.status_cb:
+            asyncio.run_coroutine_threadsafe(self.status_cb(status), self._event_loop)
 
     def emit_error(self, error):
         if self.error_cb:

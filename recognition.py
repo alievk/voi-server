@@ -146,6 +146,48 @@ class HypothesisBuffer:
         return words
 
 
+class VoiceActivityDetector:
+    def __init__(self, sampling_rate=16000, voice_threshold=0.5):
+        assert sampling_rate in [8000, 16000], f"Unsupported sampling rate {sampling_rate}"
+        self.model, _ = torch.hub.load(repo_or_dir='snakers4/silero-vad', model='silero_vad')
+        self.sampling_rate = sampling_rate
+        self.voice_threshold = voice_threshold
+        self.silence_threshold = max(self.voice_threshold - 0.15, 0.1)
+
+        self._sample_width = {8000: 256, 16000: 512}[self.sampling_rate]
+        self._silence_duration = None
+        self._remainder = None
+        self._triggered = None
+        self.reset()
+
+    def reset(self):
+        self._silence_duration = 0.0
+        self._remainder = np.empty((0,), dtype=np.float32)
+        self._triggered = False
+
+    def process_chunk(self, chunk):
+        chunk = np.concatenate([self._remainder, chunk])
+        for i in range(len(chunk) // self._sample_width):
+            sample = chunk[i * self._sample_width:(i + 1) * self._sample_width]
+            silence_duration = self._process_sample(sample)
+        self._remainder = chunk[-(len(chunk) % self._sample_width):]
+        return silence_duration
+
+    def _process_sample(self, chunk):
+        prob = self.model(torch.from_numpy(chunk), self.sampling_rate)
+
+        if prob > self.voice_threshold:
+            self._silence_duration = 0.0
+            self._triggered = True
+        elif prob < self.silence_threshold and self._triggered:
+            self._silence_duration += self._get_duration(chunk)
+
+        return self._silence_duration
+
+    def _get_duration(self, chunk):
+        return len(chunk) / self.sampling_rate
+
+
 class OfflineASR:
     word_sep = " "
     _cached_model_params = None

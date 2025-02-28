@@ -13,7 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 import torch
 
-from recognition import OnlineASR
+from recognition import OnlineASR, VoiceActivityDetector
 from generation import MultiVoiceGenerator, DummyVoiceGenerator, AsyncVoiceGenerator
 from audio import AudioInputStream, WavGroupSaver, convert_f32le_to_s16le, convert_s16le_to_ogg
 from llm import AgentConfigManager, ConversationContext, BaseLLMAgent, CharacterLLMAgent, CharacterEchoAgent, voice_tone_emoji
@@ -54,6 +54,14 @@ async def safe_send(websocket, message, fatal=False):
         if fatal:
             raise e
         logger.error(f"Error sending message: {e}")
+
+
+async def send_status(websocket, status, **kwargs):
+    await safe_send(websocket, serialize_message({
+        "type": "status",
+        "status": status,
+        **kwargs
+    }), fatal=True)
 
 
 async def send_error(websocket, error_message):
@@ -109,6 +117,9 @@ async def start_conversation(websocket, token_data):
 
     async def voice_generator_error_handler(error):
         await send_error(websocket, f"Error in VoiceGenerator: {error}")
+
+    async def conversation_status_handler(status):
+        await send_status(websocket, status)
 
     async def conversation_error_handler(error):
         await send_error(websocket, f"Error in Conversation: {error}")
@@ -264,12 +275,15 @@ async def start_conversation(websocket, token_data):
     logger.info("Initializing audio input stream")
     audio_input_stream = AudioInputStream(
         handle_input_audio,
-        output_chunk_size_ms=500,
+        output_chunk_size_ms=100,
         input_sample_rate=16000, # client sends 16000
         output_sample_rate=asr.sample_rate,
         input_format=init_message.get("input_audio_format", "pcm16")
     )
     audio_input_stream.start()
+
+    logger.info("Initializing VAD")
+    vad = VoiceActivityDetector()
 
     logger.info("Initializing response agent")
     if agent_config["llm_model"] == "echo":
@@ -285,12 +299,14 @@ async def start_conversation(websocket, token_data):
     logger.info("Initializing conversation")
     conversation = Conversation(
         audio_input_stream=audio_input_stream,
+        vad=vad,
         asr=asr,
         voice_generator=voice_generator,
         character_agent=character_agent,
         conversation_context=conversation_context,
         stream_user_stt=init_message.get("stream_user_stt", True),
         final_stt_correction=init_message.get("final_stt_correction", True),
+        status_cb=conversation_status_handler,
         error_cb=conversation_error_handler,
         event_loop=event_loop
     )
@@ -305,10 +321,7 @@ async def start_conversation(websocket, token_data):
         sample_rate=voice_generator.sample_rate
     )
 
-    await safe_send(websocket, serialize_message({
-        "type": "init_done",
-        "agent_name": init_message["agent_name"]
-    }), fatal=True)
+    await send_status(websocket, "init_done", agent_name=init_message["agent_name"])
 
     if init_message.get("init_greeting", True):
         conversation.greeting()
@@ -339,9 +352,7 @@ async def start_conversation(websocket, token_data):
                     conversation.on_user_image_url(metadata["image_url"])
                 elif message_type in ["create_response"]:
                     conversation.on_create_response()
-                    await safe_send(websocket, serialize_message({
-                        "type": "response_created"
-                    }))
+                    await send_status(websocket, "response_created")
                 elif message_type == "interrupt":
                     conversation.on_user_interrupt(
                         speech_id=int(metadata["speech_id"]), 
