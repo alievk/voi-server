@@ -126,9 +126,14 @@ class HypothesisBuffer:
         logger.debug("comparing:")
         logger.debug("unconf: {}", Word.to_text(s1))
         logger.debug("currnt: {}", Word.to_text(s2))
+
+        def compare(w1, w2):
+            w1_lower = ''.join(c for c in w1.word.lower() if c.isalpha())
+            w2_lower = ''.join(c for c in w2.word.lower() if c.isalpha())
+            return w1_lower == w2_lower
         
         index = 0
-        while index < min_len and s1[index].word.lower() == s2[index].word.lower():
+        while index < min_len and compare(s1[index], s2[index]):
             index += 1
 
         return s1[:index]
