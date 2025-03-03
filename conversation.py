@@ -27,6 +27,7 @@ class Conversation:
         self.online_asr = asr
         self.offline_asr = asr.asr
         self.user_audio_buffer = AudioBuffer(min_duration=1.0, max_duration=60)
+        self.full_user_audio_buffer = AudioBuffer(min_duration=1.0, max_duration=60)
         self.voice_generator = voice_generator
         self.character_agent = character_agent
         self.conversation_context = conversation_context
@@ -36,6 +37,7 @@ class Conversation:
         self.status_cb = status_cb
         self.user_attachments = []
 
+        self._need_voice_correction = False
         self._last_speech_text = ""
         self._stt_finished = asyncio.Event()
         self._stt_finished.set()
@@ -58,13 +60,15 @@ class Conversation:
         """ audio_chunk is f32le """
         end_of_audio = audio_chunk is None
 
-        STT_SILENCE_THRESHOLD = 0.2
+        VAD_SILENCE_STT_THRESHOLD = 0.2
+        VAD_SILENCE_CREATE_RESPONSE_THRESHOLD = 1.0
+        VAD_VOICE_CORRECTION_THRESHOLD = 0.5
 
         last_message = self.conversation_context.last_message()        
 
-        def transcribe_audio_buffer(audio_buffer):
-            if self._last_speech_text:
-                cond_text = self._last_speech_text + ' '
+        def transcribe_audio_buffer(audio_buffer, last_speech_text):
+            if last_speech_text:
+                cond_text = last_speech_text + ' '
             elif last_message and last_message["role"] == "assistant":
                 cond_text = f"- {last_message['content'][0]['text']}\n- "
             else:
@@ -76,18 +80,41 @@ class Conversation:
         buffer_text = None
         if end_of_audio:
             audio_buffer, _ = self.user_audio_buffer.clear()
-            buffer_text = transcribe_audio_buffer(audio_buffer)
+            audio_len = len(audio_buffer) / self.user_audio_buffer.sampling_rate
+            logger.debug(f"Final audio buffer length: {audio_len} seconds")
+            if audio_len > self.user_audio_buffer.min_duration:
+                buffer_text = transcribe_audio_buffer(audio_buffer, last_speech_text=self._last_speech_text)
             self.vad.reset()
+            self.full_user_audio_buffer.clear()
+            self._need_voice_correction = False
         else:
-            silence_duration = self.vad.process_chunk(audio_chunk)
+            vad_result = self.vad.process_chunk(audio_chunk)
             audio_buffer, _ = self.user_audio_buffer.push(audio_chunk)
+            self.full_user_audio_buffer.push(audio_chunk)
 
-            if self.stream_user_stt and silence_duration > STT_SILENCE_THRESHOLD and audio_buffer is not None:
-                buffer_text = transcribe_audio_buffer(audio_buffer)
-                self.user_audio_buffer.clear()
-                self.vad.reset()
+            if vad_result:
+                if self.stream_user_stt:
+                    if vad_result["trailing_silence"] > VAD_SILENCE_STT_THRESHOLD:
+                        logger.debug("STT silence threshold triggered")
+                        logger.debug(f"VAD result: {vad_result}")
+                        if audio_buffer is not None and vad_result["has_voice"]:
+                            buffer_text = transcribe_audio_buffer(audio_buffer, last_speech_text=self._last_speech_text)
+                            self.user_audio_buffer.clear()
+                            self.vad.reset()
+                            self._need_voice_correction = True
 
+                    if vad_result["trailing_silence"] > VAD_SILENCE_CREATE_RESPONSE_THRESHOLD:
+                        pass
+
+                    # if (vad_result["trailing_voice"] > VAD_VOICE_CORRECTION_THRESHOLD and
+                    #     self._need_voice_correction):
+                    #     audio_buffer = self.full_user_audio_buffer.buffer
+                    #     self._last_speech_text = transcribe_audio_buffer(audio_buffer, last_speech_text="")
+                    #     buffer_text = " " # just to trigger update
+                    #     self._need_voice_correction = False
+                        
         if buffer_text:
+            logger.debug(f"Buffer text: {buffer_text}")
             speech_text = self._last_speech_text + ' ' + buffer_text
             self._last_speech_text = speech_text
 

@@ -155,34 +155,43 @@ class VoiceActivityDetector:
         self.silence_threshold = max(self.voice_threshold - 0.15, 0.1)
 
         self._sample_width = {8000: 256, 16000: 512}[self.sampling_rate]
-        self._silence_duration = None
+        self._trailing_silence = 0.0
+        self._trailing_voice = 0.0
+        self._has_voice = None
         self._remainder = None
-        self._triggered = None
         self.reset()
 
     def reset(self):
-        self._silence_duration = 0.0
+        self._trailing_silence = 0.0
+        self._trailing_voice = 0.0
+        self._has_voice = None
         self._remainder = np.empty((0,), dtype=np.float32)
-        self._triggered = False
 
     def process_chunk(self, chunk):
         chunk = np.concatenate([self._remainder, chunk])
+        result = None
         for i in range(len(chunk) // self._sample_width):
             sample = chunk[i * self._sample_width:(i + 1) * self._sample_width]
-            silence_duration = self._process_sample(sample)
+            result = self._process_sample(sample)
         self._remainder = chunk[-(len(chunk) % self._sample_width):]
-        return silence_duration
+        return result
 
     def _process_sample(self, chunk):
         prob = self.model(torch.from_numpy(chunk), self.sampling_rate)
 
         if prob > self.voice_threshold:
-            self._silence_duration = 0.0
-            self._triggered = True
-        elif prob < self.silence_threshold and self._triggered:
-            self._silence_duration += self._get_duration(chunk)
+            self._trailing_voice += self._get_duration(chunk)
+            self._trailing_silence = 0.0
+            self._has_voice = True
+        elif prob < self.silence_threshold:
+            self._trailing_voice = 0.0
+            self._trailing_silence += self._get_duration(chunk)
 
-        return self._silence_duration
+        return {
+            "trailing_silence": self._trailing_silence,
+            "trailing_voice": self._trailing_voice,
+            "has_voice": self._has_voice
+        }
 
     def _get_duration(self, chunk):
         return len(chunk) / self.sampling_rate
