@@ -164,17 +164,23 @@ class VoiceActivityDetector:
     def reset(self):
         self._trailing_silence = 0.0
         self._trailing_voice = 0.0
-        self._has_voice = None
+        self._has_voice = False
         self._remainder = np.empty((0,), dtype=np.float32)
 
     def process_chunk(self, chunk):
         chunk = np.concatenate([self._remainder, chunk])
-        result = None
+
         for i in range(len(chunk) // self._sample_width):
             sample = chunk[i * self._sample_width:(i + 1) * self._sample_width]
-            result = self._process_sample(sample)
+            self._process_sample(sample)
+
         self._remainder = chunk[-(len(chunk) % self._sample_width):]
-        return result
+
+        return {
+            "trailing_silence": self._trailing_silence,
+            "trailing_voice": self._trailing_voice,
+            "has_voice": self._has_voice
+        }
 
     def _process_sample(self, chunk):
         prob = self.model(torch.from_numpy(chunk), self.sampling_rate)
@@ -186,12 +192,6 @@ class VoiceActivityDetector:
         elif prob < self.silence_threshold:
             self._trailing_voice = 0.0
             self._trailing_silence += self._get_duration(chunk)
-
-        return {
-            "trailing_silence": self._trailing_silence,
-            "trailing_voice": self._trailing_voice,
-            "has_voice": self._has_voice
-        }
 
     def _get_duration(self, chunk):
         return len(chunk) / self.sampling_rate
