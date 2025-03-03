@@ -15,6 +15,13 @@ FAST_FORWARD_TIME_MARGIN = 0.1 # seconds
 
 ASR_CONTEXT_LENGTH = 200 # words
 
+VAD_SILENCE_STT_THRESHOLD = 0.2
+
+CONDITIONING_TEXT = {
+    "en": "He thoughtfuly said:",
+    "ru": "Он задумчиво сказал:"
+}
+
 
 cuda_lock = threading.Lock()
 
@@ -36,8 +43,10 @@ class AudioBuffer:
         self.clear()
 
     def push(self, data):
-        assert isinstance(data, np.ndarray), f"Invalid data type: {type(data)}"
-        self.buffer = np.concatenate([self.buffer, data])
+        if data is not None:
+            assert isinstance(data, np.ndarray), f"Invalid data type: {type(data)}"
+            self.buffer = np.concatenate([self.buffer, data])
+        
         if len(self.buffer) < self.min_size:
             logger.debug("Audio buffer ({:.2f}s) is shorter than {}s", len(self.buffer) / self.sampling_rate, self.min_duration)
             return None, None
@@ -47,6 +56,10 @@ class AudioBuffer:
             self.offset += (len(self.buffer) - self.max_size) / self.sampling_rate
             self.buffer = self.buffer[-self.max_size:]
             logger.debug("New buffer length: {:.2f}s. Offset: {:.2f}s -> {:.2f}s", len(self.buffer) / self.sampling_rate, o_offset, self.offset)
+
+        if data is None:
+            return self.clear()
+        
         return self.buffer, self.offset
 
     def clear(self):
@@ -162,12 +175,28 @@ class VoiceActivityDetector:
         self.reset()
 
     def reset(self):
+        trailing_silence, trailing_voice, has_voice = (
+            self._trailing_silence, self._trailing_voice, self._has_voice
+        )
         self._trailing_silence = 0.0
         self._trailing_voice = 0.0
         self._has_voice = False
         self._remainder = np.empty((0,), dtype=np.float32)
 
+        return {
+            "trailing_silence": trailing_silence,
+            "trailing_voice": trailing_voice,
+            "has_voice": has_voice
+        }
+
+    def clear_voice(self):
+        self._trailing_voice = 0.0
+        self._has_voice = False
+
     def process_chunk(self, chunk):
+        if chunk is None:
+            return self.reset()
+
         chunk = np.concatenate([self._remainder, chunk])
 
         for i in range(len(chunk) // self._sample_width):
@@ -369,3 +398,48 @@ class OnlineASR:
     def sample_rate(self):
         return self.audio_buffer.sampling_rate
 
+
+class ASRWithVAD:
+    def __init__(self, language='en', cached=False, vad_silence_threshold=VAD_SILENCE_STT_THRESHOLD):
+        self.asr = OfflineASR(language=language, cached=cached)
+        self.vad_silence_threshold = vad_silence_threshold
+
+        self.vad = VoiceActivityDetector()
+        self.audio_buffer = AudioBuffer(min_duration=1.0, max_duration=60)
+
+    def process_chunk(self, chunk, context=None):
+        vad_stats = self.vad.process_chunk(chunk)
+        audio_buffer, _ = self.audio_buffer.push(chunk)
+
+        has_voice = True
+        buffer_text = None
+        if audio_buffer is None:
+            logger.debug("Audio buffer is not filled yet, skipping.")
+            has_voice = False
+
+        if not vad_stats["has_voice"]:
+            logger.debug("Audio buffer is silent, skipping.")
+            has_voice = False
+
+        if has_voice and vad_stats["trailing_silence"] > self.vad_silence_threshold:
+            logger.debug("STT silence threshold triggered, transcribing.")
+            buffer_text = self._transcribe(audio_buffer, context=context)
+            self.audio_buffer.clear()
+            self.vad.clear_voice()
+
+        return {
+            "text": buffer_text,
+            "vad_stats": vad_stats
+        }
+
+    def _transcribe(self, audio_buffer, context=None):
+        if context is not None and context.last_message():
+            cond_text = context.last_message()["content"][0]["text"]
+        else:
+            cond_text = CONDITIONING_TEXT[self.language]
+        words = self.asr.transcribe(audio_buffer, previous_text=cond_text)
+        return Word.to_text(words)
+
+    @property
+    def sample_rate(self):
+        return SAMPLING_RATE

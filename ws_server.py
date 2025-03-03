@@ -13,7 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 import torch
 
-from recognition import OnlineASR, VoiceActivityDetector
+from recognition import ASRWithVAD
 from generation import MultiVoiceGenerator, DummyVoiceGenerator, AsyncVoiceGenerator
 from audio import AudioInputStream, WavGroupSaver, convert_f32le_to_s16le, convert_s16le_to_ogg
 from llm import AgentConfigManager, ConversationContext, BaseLLMAgent, CharacterLLMAgent, CharacterEchoAgent, voice_tone_emoji
@@ -247,7 +247,7 @@ async def start_conversation(websocket, token_data):
         return
 
     logger.info("Initializing speech recognition")
-    asr = OnlineASR(
+    asr = ASRWithVAD(
         cached=True
     )
 
@@ -282,9 +282,6 @@ async def start_conversation(websocket, token_data):
     )
     audio_input_stream.start()
 
-    logger.info("Initializing VAD")
-    vad = VoiceActivityDetector()
-
     logger.info("Initializing response agent")
     if agent_config["llm_model"] == "echo":
         character_agent = CharacterEchoAgent()
@@ -299,7 +296,6 @@ async def start_conversation(websocket, token_data):
     logger.info("Initializing conversation")
     conversation = Conversation(
         audio_input_stream=audio_input_stream,
-        vad=vad,
         asr=asr,
         voice_generator=voice_generator,
         character_agent=character_agent,
