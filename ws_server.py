@@ -20,10 +20,13 @@ from llm import AgentConfigManager, ConversationContext, BaseLLMAgent, Character
 from conversation import Conversation
 from token_generator import generate_token, TOKEN_SECRET_KEY
 from image import blob_to_image
+from utils import LogDeduplicator
 
 os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
 torch.backends.cudnn.benchmark = False
 torch.backends.cudnn.deterministic = True
+
+DEFAULT_MODE = "chat"
 
 cuda_lock = Lock()
 
@@ -109,6 +112,7 @@ async def start_conversation(websocket, token_data):
     user_speech_counter = 0
     assistant_speech_counter = 0
     event_loop = asyncio.get_running_loop()
+    log_deduplicator = LogDeduplicator()
 
     log_dir = f"logs/conversations/{app_id}/{get_timestamp()}"
     logger.add(f"{log_dir}/server.log", rotation="100 MB")
@@ -184,6 +188,7 @@ async def start_conversation(websocket, token_data):
             "type", 
             "agent_name", 
             "agent_config",
+            "mode",
             "stream_user_stt",
             "final_stt_correction",
             "stream_output_audio", 
@@ -209,6 +214,9 @@ async def start_conversation(websocket, token_data):
 
         if init_message["type"] != "init":
             raise ValueError("Invalid message type")
+
+        if init_message.get("mode") not in ["chat", "call", None]:
+            raise ValueError("Invalid mode")
 
         return init_message
 
@@ -294,12 +302,14 @@ async def start_conversation(websocket, token_data):
     )
     
     logger.info("Initializing conversation")
+    conversation_mode = init_message.get("mode", DEFAULT_MODE)
     conversation = Conversation(
         audio_input_stream=audio_input_stream,
         asr=asr,
         voice_generator=voice_generator,
         character_agent=character_agent,
         conversation_context=conversation_context,
+        mode=conversation_mode,
         stream_user_stt=init_message.get("stream_user_stt", True),
         final_stt_correction=init_message.get("final_stt_correction", True),
         status_cb=conversation_status_handler,
@@ -322,6 +332,22 @@ async def start_conversation(websocket, token_data):
     if init_message.get("init_greeting", True):
         conversation.greeting()
 
+    valid_incoming_message_types = {
+        "chat": {
+            "audio",
+            "text",
+            "image_url",
+            "create_response",
+            "interrupt",
+            "invoke_llm"
+        },
+        "call": {
+            "audio",
+            "image_url",
+            "invoke_llm"
+        }
+    }
+
     logger.info("Entering main loop")
     while True:
         try:
@@ -338,7 +364,17 @@ async def start_conversation(websocket, token_data):
             try:
                 metadata, blob = deserialize_message(message["bytes"])
                 message_type = metadata["type"]
-                logger.debug(f"Received message: {metadata}")
+
+                if message_type not in valid_incoming_message_types[conversation_mode]:
+                    e = f"Message type {message_type} is not supported in mode {conversation_mode}"
+                    logger.warning(e)
+                    await send_error(websocket, e)
+                    continue
+                
+                log_deduplicator.log(
+                    f"Received message: {metadata}",
+                    logger.debug
+                )
 
                 if message_type == "audio":
                     conversation.on_user_audio(blob)

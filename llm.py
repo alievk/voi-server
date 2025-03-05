@@ -7,6 +7,7 @@ import random
 import asyncio
 import copy
 from loguru import logger
+import hashlib
 
 from text import SentenceStream, NARRATOR_MARKER
 
@@ -141,6 +142,9 @@ class ConversationContext:
                 messages = [processor(msg) for msg in messages]
 
             return messages
+
+    def get_hash(self):
+        return hashlib.md5(json.dumps(self._messages).encode()).hexdigest()
 
     def last_message(self):
         with self.lock:

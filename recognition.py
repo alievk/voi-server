@@ -411,21 +411,16 @@ class ASRWithVAD:
         vad_stats = self.vad.process_chunk(chunk)
         audio_buffer, _ = self.audio_buffer.push(chunk)
 
-        has_voice = True
-        buffer_text = None
-        if audio_buffer is None:
-            logger.debug("Audio buffer is not filled yet, skipping.")
-            has_voice = False
-
-        if not vad_stats["has_voice"]:
-            logger.debug("Audio buffer is silent, skipping.")
-            has_voice = False
-
-        if has_voice and vad_stats["trailing_silence"] > self.vad_silence_threshold:
+        if (audio_buffer is not None and 
+            vad_stats["has_voice"] and 
+            vad_stats["trailing_silence"] > self.vad_silence_threshold
+        ):
             logger.debug("STT silence threshold triggered, transcribing.")
             buffer_text = self._transcribe(audio_buffer, context=context)
             self.audio_buffer.clear()
             self.vad.clear_voice()
+        else:
+            buffer_text = None
 
         return {
             "text": buffer_text,
@@ -436,7 +431,7 @@ class ASRWithVAD:
         if context is not None and context.last_message():
             cond_text = context.last_message()["content"][0]["text"]
         else:
-            cond_text = CONDITIONING_TEXT[self.language]
+            cond_text = CONDITIONING_TEXT[self.asr.language]
         words = self.asr.transcribe(audio_buffer, previous_text=cond_text)
         return Word.to_text(words)
 

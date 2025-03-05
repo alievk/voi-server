@@ -1,31 +1,35 @@
 import asyncio
 from datetime import datetime
 from loguru import logger
+from typing import Callable
 
-from llm import BaseLLMAgent
-from recognition import Word, AudioBuffer, OnlineASR
+from llm import ConversationContext, CharacterLLMAgent
+from recognition import ASRWithVAD
+from generation import AsyncVoiceGenerator
 from image import blob_to_openai_url
-
+from audio import AudioInputStream
 
 class Conversation:
     def __init__(
         self, 
-        audio_input_stream,
-        asr,
-        voice_generator,
-        character_agent,
-        conversation_context,
+        audio_input_stream: AudioInputStream,
+        asr: ASRWithVAD,
+        voice_generator: AsyncVoiceGenerator,
+        character_agent: CharacterLLMAgent,
+        conversation_context: ConversationContext,
+        mode: str = "chat",
         stream_user_stt: bool = True,
         final_stt_correction: bool = True,
-        error_cb=None,
-        status_cb=None,
-        event_loop=None
+        error_cb: Callable = None,
+        status_cb: Callable = None,
+        event_loop: asyncio.AbstractEventLoop = None
     ):
         self.audio_input_stream = audio_input_stream
         self.asr = asr
         self.voice_generator = voice_generator
         self.character_agent = character_agent
         self.conversation_context = conversation_context
+        self.mode = mode
         self.stream_user_stt = stream_user_stt
         self.final_stt_correction = final_stt_correction
         self.error_cb = error_cb
@@ -35,6 +39,8 @@ class Conversation:
         self._stt_finished = asyncio.Event()
         self._stt_finished.set()
         self._event_loop = event_loop or asyncio.get_running_loop()
+
+        self._last_request_hash = None
 
     def greeting(self):
         message = self.character_agent.greeting_message()
@@ -53,6 +59,10 @@ class Conversation:
         """ audio_chunk is f32le """
         asr_result = self.asr.process_chunk(audio_chunk, context=self.conversation_context)
 
+        if self.mode == "call" and asr_result["vad_stats"]["trailing_voice"] > 0:
+            logger.info(f"Triggering interrupt for detected user voice.")
+            self.voice_generator.interrupt()
+
         if asr_result["text"]:
             logger.debug(f"Adding text chunk: {asr_result['text']}")
             last_message = self.conversation_context.last_message()
@@ -68,6 +78,18 @@ class Conversation:
 
         if audio_chunk is None: # end of user audio
             self._stt_finished.set()
+
+        RESPONSE_SILENCE_THRESHOLD = 2
+        context_hash = self.conversation_context.get_hash()
+        trailing_silence = asr_result["vad_stats"]["trailing_silence"]
+        if (
+            self.mode == "call" and 
+            trailing_silence > RESPONSE_SILENCE_THRESHOLD and
+            self._last_request_hash != context_hash
+        ):
+            logger.info(f"Triggering response for trailing silence {trailing_silence} > {RESPONSE_SILENCE_THRESHOLD}")
+            self.on_create_response()
+            self._last_request_hash = context_hash
 
     def on_user_text(self, text):
         message = {
@@ -86,20 +108,19 @@ class Conversation:
         self.user_attachments.append(content)
 
     def on_create_response(self):
-        self.voice_generator.interrupt()
         asyncio.run_coroutine_threadsafe(self._create_response(), self._event_loop)
 
     async def _create_response(self):
         try:
-            self.audio_input_stream.stop() # (blocking) guarantee that the user audio buffer is decoded
-            await self._stt_finished.wait()
-            self._attach_documents()
-
             messages = self.conversation_context.get_messages()
             if not messages or messages[-1]["role"] != "user":
                 logger.info("The last message is not a user message, skipping response")
                 self.emit_status('response_cancelled')
                 return
+
+            self.audio_input_stream.stop() # (blocking) guarantee that the user audio buffer is decoded
+            await self._stt_finished.wait()
+            self._attach_documents()
 
             self.conversation_context.process_interrupted_messages()
             response = await self.character_agent.acompletion(self.conversation_context)
