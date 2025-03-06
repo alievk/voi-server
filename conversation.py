@@ -9,6 +9,10 @@ from generation import AsyncVoiceGenerator
 from image import blob_to_openai_url
 from audio import AudioInputStream
 
+
+USER_SILENCE_BEFORE_RESPONSE_SEC = 2
+
+
 class Conversation:
     def __init__(
         self, 
@@ -79,15 +83,14 @@ class Conversation:
         if audio_chunk is None: # end of user audio
             self._stt_finished.set()
 
-        RESPONSE_SILENCE_THRESHOLD = 2
         context_hash = self.conversation_context.get_hash()
         trailing_silence = asr_result["vad_stats"]["trailing_silence"]
         if (
             self.mode == "call" and 
-            trailing_silence > RESPONSE_SILENCE_THRESHOLD and
+            trailing_silence > USER_SILENCE_BEFORE_RESPONSE_SEC and
             self._last_request_hash != context_hash
         ):
-            logger.info(f"Triggering response for trailing silence {trailing_silence} > {RESPONSE_SILENCE_THRESHOLD}")
+            logger.info(f"Triggering response for trailing silence {trailing_silence} > {USER_SILENCE_BEFORE_RESPONSE_SEC}")
             self.on_create_response()
             self._last_request_hash = context_hash
 
