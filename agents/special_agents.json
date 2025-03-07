@@ -40,33 +40,6 @@
             "- reason: a short and concise reason for the choosen status."
         ],
         "examples": [
-
-        ],
-        "_examples": [
-            {
-                "user": "Conversation:\n-Assistant: Hi, how can I help?\n-User: Hi.",
-                "assistant": "{\"status\": \"not_ready\", \"reason\": \"The user just said \"Hi\" and did not ask for help\"}"
-            },
-            {
-                "user": "Conversation:\n-Assistant: What's your name?\n-User: My name is...", 
-                "assistant": "{\"status\": \"not_ready\", \"reason\": \"The user did not tell its name yet.\"}"
-            },
-            {
-                "user": "Conversation:\n-Assistant: My name is Alice, I'm listening.\n-User: I need table", 
-                "assistant": "{\"status\": \"ready\", \"reason\": \"The user said clearly specified the request.\"}"
-            },
-            {
-                "user": "Conversation:\n-Assistant: How many people and what time?\n-User: Amm... Two people.", 
-                "assistant": "{\"status\": \"not_ready\", \"reason\": \"The user told how many people but did not specified the time.\"}"
-            },
-            {
-                "user": "Conversation:\n-Assistant: Hi, I'm listening.?\n-User: I want to fuck", 
-                "assistant": "{\"status\": \"ready\", \"reason\": \"Inappropriate language needs an immediate response.\"}"
-            },
-            {
-                "user": "Conversation:\n-Assistant: Hello?\n-User: What is your name", 
-                "assistant": "{\"status\": \"ready\", \"reason\": \"The users is asking the name of the agent.\"}"
-            }
         ]
     }
 }
