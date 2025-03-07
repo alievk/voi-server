@@ -202,8 +202,8 @@ class AgentConfigManager:
         def resolve(value, vars=None):
             if isinstance(value, list):
                 return [resolve(v, vars) for v in value]
-            elif isinstance(value, dict) and "content" in value:
-                return resolve(value["content"], vars)
+            elif isinstance(value, dict):
+                return {k: resolve(v, vars) for k, v in value.items()}
 
             for pattern_name, pattern in prompt_patterns.items():
                 value = value.replace(f"{{prompt_pattern:{pattern_name}}}", pattern)
@@ -582,6 +582,34 @@ class ControlLLMAgent(BaseLLMAgent):
             return False
         
         return True
+
+
+class CompletenessAgent(BaseLLMAgent):
+    def __init__(self, system_prompt, model_name="gpt-4o-mini", examples=None):
+        super().__init__(
+            model_name=model_name,
+            system_prompt=system_prompt,
+            examples=examples,
+        )
+
+    @staticmethod
+    def from_config(config):
+        return CompletenessAgent(
+            system_prompt=config["system_prompt"],
+            model_name=config.get("model"),
+            examples=config.get("examples")
+        )
+
+    async def aclassify(self, context):
+        _context = ConversationContext()
+        _context.add_message({
+            "role": "user",
+            "content": [{
+                "type": "text",
+                "text": "\n".join(["Conversation:"] + ["-" + msg["role"] + ": " + msg["content"][0]["text"] for msg in context.get_messages()])
+            }]
+        })
+        return await super().acompletion(_context)
 
 
 def _setup_litellm():

@@ -1,5 +1,19 @@
 from datetime import datetime
 
+
+class Once:
+    def __init__(self):
+        self.called = False
+
+    def call(self, fn, *args, **kwargs):
+        if not self.called:
+            self.called = True
+            fn(*args, **kwargs)
+
+    def reset(self):
+        self.called = False
+
+
 class LogDeduplicator:
     def __init__(self):
         self.last_message = None

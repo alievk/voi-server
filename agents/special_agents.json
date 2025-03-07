@@ -1,0 +1,72 @@
+{
+    "control_agent_llama_3.1_70b_instruct_turbo": {
+        "model": "pattern_matching",
+        "denial_phrases": [
+            "I cannot create",
+            "I can't create",
+            "I cannot provide",
+            "I can't provide",
+            "I cannot engage in",
+            "I can't engage in",
+            "I can't support that request",
+            "I can't help with that",
+            "I can't help you with that",
+            "I can't assist you",
+            "I cannot answer that",
+            "I can't answer that",
+            "explicit content",
+            "promotes violence",
+            "promotes harmful"
+        ],
+        "giveup_after": 3,
+        "giveup_response": [
+            "Mmm?",
+            "Sorry, what?"
+        ]
+    },
+
+    "completeness_agent": {
+        "model": "gpt-4o-mini",
+        "system_prompt": [
+            "You will be given a conversation log between an AI assistant and a user.",
+            "A user speaks to an agent naturally using audio.",
+            "The last message in the conversaton log is a transcription of an ongoing user speech.",
+            "Looking at the current transcription, determine whether the user completed its statement or not yet.",
+
+            "Answer with a valid JSON object:",
+            "{\"status\": <complete or incomplete>, \"reason\": <reason for action>}",
+            "- complete: the user's statement is complete.",
+            "- incomplete: the user's statement is incomplete.",
+            "- reason: a short and concise reason for the choosen status."
+        ],
+        "examples": [
+
+        ],
+        "_examples": [
+            {
+                "user": "Conversation:\n-Assistant: Hi, how can I help?\n-User: Hi.",
+                "assistant": "{\"status\": \"not_ready\", \"reason\": \"The user just said \"Hi\" and did not ask for help\"}"
+            },
+            {
+                "user": "Conversation:\n-Assistant: What's your name?\n-User: My name is...", 
+                "assistant": "{\"status\": \"not_ready\", \"reason\": \"The user did not tell its name yet.\"}"
+            },
+            {
+                "user": "Conversation:\n-Assistant: My name is Alice, I'm listening.\n-User: I need table", 
+                "assistant": "{\"status\": \"ready\", \"reason\": \"The user said clearly specified the request.\"}"
+            },
+            {
+                "user": "Conversation:\n-Assistant: How many people and what time?\n-User: Amm... Two people.", 
+                "assistant": "{\"status\": \"not_ready\", \"reason\": \"The user told how many people but did not specified the time.\"}"
+            },
+            {
+                "user": "Conversation:\n-Assistant: Hi, I'm listening.?\n-User: I want to fuck", 
+                "assistant": "{\"status\": \"ready\", \"reason\": \"Inappropriate language needs an immediate response.\"}"
+            },
+            {
+                "user": "Conversation:\n-Assistant: Hello?\n-User: What is your name", 
+                "assistant": "{\"status\": \"ready\", \"reason\": \"The users is asking the name of the agent.\"}"
+            }
+        ]
+    }
+}

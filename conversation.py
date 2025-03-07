@@ -3,14 +3,20 @@ from datetime import datetime
 from loguru import logger
 from typing import Callable
 
-from llm import ConversationContext, CharacterLLMAgent
+from llm import ConversationContext, CharacterLLMAgent, CompletenessAgent, AgentConfigManager
 from recognition import ASRWithVAD
 from generation import AsyncVoiceGenerator
 from image import blob_to_openai_url
 from audio import AudioInputStream
+from utils import Once
 
 
-USER_SILENCE_BEFORE_RESPONSE_SEC = 2
+call_mode_params = {
+    "user_silence_before_response": {
+        "complete": 0,
+        "incomplete": 2
+    }
+}
 
 
 class Conversation:
@@ -45,6 +51,12 @@ class Conversation:
         self._event_loop = event_loop or asyncio.get_running_loop()
 
         self._last_request_hash = None
+        self._user_message_status = "incomplete"
+        self._interrupt_once = Once()
+
+        agent_config_manager = AgentConfigManager()
+        agent_config = agent_config_manager.get_config("completeness_agent")
+        self._completeness_agent = CompletenessAgent.from_config(agent_config)
 
     def greeting(self):
         message = self.character_agent.greeting_message()
@@ -64,8 +76,7 @@ class Conversation:
         asr_result = self.asr.process_chunk(audio_chunk, context=self.conversation_context)
 
         if self.mode == "call" and asr_result["vad_stats"]["trailing_voice"] > 0:
-            logger.info(f"Triggering interrupt for detected user voice.")
-            self.voice_generator.interrupt()
+            self._interrupt_once.call(self.on_user_interrupt)
 
         if asr_result["text"]:
             logger.debug(f"Adding text chunk: {asr_result['text']}")
@@ -80,19 +91,33 @@ class Conversation:
                 }
                 self.conversation_context.add_message(message)
 
+            # if self.mode == "call":
+            #     asyncio.run_coroutine_threadsafe(
+            #         self._update_context(),
+            #         self._event_loop
+            #     )
+
         if audio_chunk is None: # end of user audio
             self._stt_finished.set()
 
         context_hash = self.conversation_context.get_hash()
         trailing_silence = asr_result["vad_stats"]["trailing_silence"]
+        user_silence_before_response = call_mode_params["user_silence_before_response"][self._user_message_status]
         if (
             self.mode == "call" and 
-            trailing_silence > USER_SILENCE_BEFORE_RESPONSE_SEC and
+            trailing_silence > user_silence_before_response and
             self._last_request_hash != context_hash
         ):
-            logger.info(f"Triggering response for trailing silence {trailing_silence} > {USER_SILENCE_BEFORE_RESPONSE_SEC}")
+            logger.info(f"Triggering response for trailing silence {trailing_silence} > {user_silence_before_response}")
             self.on_create_response()
+            self._interrupt_once.reset()
             self._last_request_hash = context_hash
+
+    @logger.catch(reraise=True)
+    async def _update_context(self):
+        response = await self._completeness_agent.aclassify(self.conversation_context)
+        self._user_message_status = response["status"]
+        logger.debug(f"User message status: {self._user_message_status}")
 
     def on_user_text(self, text):
         message = {
@@ -197,10 +222,16 @@ class Conversation:
         message["audio_duration"] = duration
         self.conversation_context.update_message(message)
 
-    def on_user_interrupt(self, speech_id, interrupted_at):
+    def on_user_interrupt(self, speech_id=None, interrupted_at=None):
         self.voice_generator.interrupt()
-        messages = self.conversation_context.get_messages(filter=lambda msg: msg["role"] == "assistant" and msg["id"] == speech_id)
-        assert messages, f"Message with speech_id {speech_id} not found"
-        message = messages[0]
-        message["interrupted_at"] = interrupted_at
-        self.conversation_context.update_message(message)
+        
+        if self.mode == "call":
+            logger.info(f"Triggering interrupt for detected user voice.")
+            self.emit_status("user_interrupt")
+
+        if speech_id:
+            messages = self.conversation_context.get_messages(filter=lambda msg: msg["role"] == "assistant" and msg["id"] == speech_id)
+            assert messages, f"Message with speech_id {speech_id} not found"
+            message = messages[0]
+            message["interrupted_at"] = interrupted_at
+            self.conversation_context.update_message(message)
