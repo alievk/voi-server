@@ -15,6 +15,13 @@ FAST_FORWARD_TIME_MARGIN = 0.1 # seconds
 
 ASR_CONTEXT_LENGTH = 200 # words
 
+VAD_SILENCE_STT_THRESHOLD = 0.2
+
+CONDITIONING_TEXT = {
+    "en": "He thoughtfuly said:",
+    "ru": "Он задумчиво сказал:"
+}
+
 
 cuda_lock = threading.Lock()
 
@@ -36,8 +43,10 @@ class AudioBuffer:
         self.clear()
 
     def push(self, data):
-        assert isinstance(data, np.ndarray), f"Invalid data type: {type(data)}"
-        self.buffer = np.concatenate([self.buffer, data])
+        if data is not None:
+            assert isinstance(data, np.ndarray), f"Invalid data type: {type(data)}"
+            self.buffer = np.concatenate([self.buffer, data])
+        
         if len(self.buffer) < self.min_size:
             logger.debug("Audio buffer ({:.2f}s) is shorter than {}s", len(self.buffer) / self.sampling_rate, self.min_duration)
             return None, None
@@ -47,6 +56,10 @@ class AudioBuffer:
             self.offset += (len(self.buffer) - self.max_size) / self.sampling_rate
             self.buffer = self.buffer[-self.max_size:]
             logger.debug("New buffer length: {:.2f}s. Offset: {:.2f}s -> {:.2f}s", len(self.buffer) / self.sampling_rate, o_offset, self.offset)
+
+        if data is None:
+            return self.clear()
+        
         return self.buffer, self.offset
 
     def clear(self):
@@ -126,9 +139,14 @@ class HypothesisBuffer:
         logger.debug("comparing:")
         logger.debug("unconf: {}", Word.to_text(s1))
         logger.debug("currnt: {}", Word.to_text(s2))
+
+        def compare(w1, w2):
+            w1_lower = ''.join(c for c in w1.word.lower() if c.isalpha())
+            w2_lower = ''.join(c for c in w2.word.lower() if c.isalpha())
+            return w1_lower == w2_lower
         
         index = 0
-        while index < min_len and s1[index].word.lower() == s2[index].word.lower():
+        while index < min_len and compare(s1[index], s2[index]):
             index += 1
 
         return s1[:index]
@@ -139,6 +157,73 @@ class HypothesisBuffer:
         while words and words[0].start < time:
             words.pop(0)
         return words
+
+
+class VoiceActivityDetector:
+    def __init__(self, sampling_rate=16000, voice_threshold=0.5):
+        assert sampling_rate in [8000, 16000], f"Unsupported sampling rate {sampling_rate}"
+        self.model, _ = torch.hub.load(repo_or_dir='snakers4/silero-vad', model='silero_vad')
+        self.sampling_rate = sampling_rate
+        self.voice_threshold = voice_threshold
+        self.silence_threshold = max(self.voice_threshold - 0.15, 0.1)
+
+        self._sample_width = {8000: 256, 16000: 512}[self.sampling_rate]
+        self._trailing_silence = 0.0
+        self._trailing_voice = 0.0
+        self._has_voice = None
+        self._remainder = None
+        self.reset()
+
+    def reset(self):
+        trailing_silence, trailing_voice, has_voice = (
+            self._trailing_silence, self._trailing_voice, self._has_voice
+        )
+        self._trailing_silence = 0.0
+        self._trailing_voice = 0.0
+        self._has_voice = False
+        self._remainder = np.empty((0,), dtype=np.float32)
+
+        return {
+            "trailing_silence": trailing_silence,
+            "trailing_voice": trailing_voice,
+            "has_voice": has_voice
+        }
+
+    def clear_voice(self):
+        self._trailing_voice = 0.0
+        self._has_voice = False
+
+    def process_chunk(self, chunk):
+        if chunk is None:
+            return self.reset()
+
+        chunk = np.concatenate([self._remainder, chunk])
+
+        for i in range(len(chunk) // self._sample_width):
+            sample = chunk[i * self._sample_width:(i + 1) * self._sample_width]
+            self._process_sample(sample)
+
+        self._remainder = chunk[-(len(chunk) % self._sample_width):]
+
+        return {
+            "trailing_silence": self._trailing_silence,
+            "trailing_voice": self._trailing_voice,
+            "has_voice": self._has_voice
+        }
+
+    def _process_sample(self, chunk):
+        prob = self.model(torch.from_numpy(chunk), self.sampling_rate)
+
+        if prob > self.voice_threshold:
+            self._trailing_voice += self._get_duration(chunk)
+            self._trailing_silence = 0.0
+            self._has_voice = True
+        elif prob < self.silence_threshold:
+            self._trailing_voice = 0.0
+            self._trailing_silence += self._get_duration(chunk)
+
+    def _get_duration(self, chunk):
+        return len(chunk) / self.sampling_rate
 
 
 class OfflineASR:
@@ -163,14 +248,14 @@ class OfflineASR:
             device=device, 
             compute_type="float16", 
             language=language,
+            asr_options={"suppress_numerals": True}
             # vad_options={'vad_onset': 0.8, 'vad_offset': 0.8}
-            # asr_options={"initial_prompt": "He thoughtfully said: "}
         )
 
         align_model, align_metadata = whisperx.load_align_model(
             language_code=language, 
             device=device, 
-            model_name="WAV2VEC2_ASR_LARGE_LV60K_960H"
+            model_name="WAV2VEC2_ASR_LARGE_LV60K_960H" if language == "en" else None
         )
 
         OfflineASR._cached_model_params = {
@@ -313,3 +398,43 @@ class OnlineASR:
     def sample_rate(self):
         return self.audio_buffer.sampling_rate
 
+
+class ASRWithVAD:
+    def __init__(self, language='en', cached=False, vad_silence_threshold=VAD_SILENCE_STT_THRESHOLD):
+        self.asr = OfflineASR(language=language, cached=cached)
+        self.vad_silence_threshold = vad_silence_threshold
+
+        self.vad = VoiceActivityDetector()
+        self.audio_buffer = AudioBuffer(min_duration=1.0, max_duration=60)
+
+    def process_chunk(self, chunk, context=None):
+        vad_stats = self.vad.process_chunk(chunk)
+        audio_buffer, _ = self.audio_buffer.push(chunk)
+
+        if (audio_buffer is not None and 
+            vad_stats["has_voice"] and 
+            vad_stats["trailing_silence"] > self.vad_silence_threshold
+        ):
+            logger.debug("STT silence threshold triggered, transcribing.")
+            buffer_text = self._transcribe(audio_buffer, context=context)
+            self.audio_buffer.clear()
+            self.vad.clear_voice()
+        else:
+            buffer_text = None
+
+        return {
+            "text": buffer_text,
+            "vad_stats": vad_stats
+        }
+
+    def _transcribe(self, audio_buffer, context=None):
+        if context is not None and context.last_message():
+            cond_text = context.last_message()["content"][0]["text"]
+        else:
+            cond_text = CONDITIONING_TEXT[self.asr.language]
+        words = self.asr.transcribe(audio_buffer, previous_text=cond_text)
+        return Word.to_text(words)
+
+    @property
+    def sample_rate(self):
+        return SAMPLING_RATE

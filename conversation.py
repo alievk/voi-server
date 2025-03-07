@@ -1,40 +1,62 @@
 import asyncio
 from datetime import datetime
 from loguru import logger
+from typing import Callable
 
-from llm import BaseLLMAgent
-from recognition import Word, AudioBuffer, OnlineASR
+from llm import ConversationContext, CharacterLLMAgent, CompletenessAgent, AgentConfigManager
+from recognition import ASRWithVAD
+from generation import AsyncVoiceGenerator
 from image import blob_to_openai_url
+from audio import AudioInputStream
+from utils import Once
+
+
+call_mode_params = {
+    "user_silence_before_response": {
+        "complete": 0,
+        "incomplete": 2
+    }
+}
 
 
 class Conversation:
     def __init__(
         self, 
-        audio_input_stream,
-        asr: OnlineASR, 
-        voice_generator,
-        character_agent,
-        conversation_context,
+        audio_input_stream: AudioInputStream,
+        asr: ASRWithVAD,
+        voice_generator: AsyncVoiceGenerator,
+        character_agent: CharacterLLMAgent,
+        conversation_context: ConversationContext,
+        mode: str = "chat",
         stream_user_stt: bool = True,
         final_stt_correction: bool = True,
-        error_cb=None,
-        event_loop=None
+        error_cb: Callable = None,
+        status_cb: Callable = None,
+        event_loop: asyncio.AbstractEventLoop = None
     ):
         self.audio_input_stream = audio_input_stream
-        self.online_asr = asr
-        self.offline_asr = asr.asr
-        self.user_audio_buffer = AudioBuffer(min_duration=0.1, max_duration=60)
+        self.asr = asr
         self.voice_generator = voice_generator
         self.character_agent = character_agent
         self.conversation_context = conversation_context
+        self.mode = mode
         self.stream_user_stt = stream_user_stt
         self.final_stt_correction = final_stt_correction
         self.error_cb = error_cb
+        self.status_cb = status_cb
         self.user_attachments = []
 
         self._stt_finished = asyncio.Event()
         self._stt_finished.set()
         self._event_loop = event_loop or asyncio.get_running_loop()
+
+        self._last_request_hash = None
+        self._user_message_status = "incomplete"
+        self._interrupt_once = Once()
+
+        agent_config_manager = AgentConfigManager()
+        agent_config = agent_config_manager.get_config("completeness_agent")
+        self._completeness_agent = CompletenessAgent.from_config(agent_config)
 
     def greeting(self):
         message = self.character_agent.greeting_message()
@@ -51,47 +73,51 @@ class Conversation:
     @logger.catch(reraise=True)
     async def handle_input_audio(self, audio_chunk):
         """ audio_chunk is f32le """
-        end_of_audio = audio_chunk is None
-        asr_result = None
+        asr_result = self.asr.process_chunk(audio_chunk, context=self.conversation_context)
 
-        if end_of_audio:
-            if self.stream_user_stt:
-                # we need to finalize the online asr even if we don't use the result
-                asr_result = self.online_asr.process_chunk(audio_chunk, finalize=True)
+        if self.mode == "call" and asr_result["vad_stats"]["trailing_voice"] > 0:
+            self._interrupt_once.call(self.on_user_interrupt)
 
-            if self.final_stt_correction and not self.user_audio_buffer.empty():
-                logger.debug("Performing final stt correction")
-                words = self.offline_asr.transcribe(self.user_audio_buffer.buffer)
-                text = Word.to_text(words)
-
-                logger.debug(f"Final stt correction: {text}")
-                asr_result = {
-                    "confirmed_text": text,
-                    "unconfirmed_text": "",
-                }
-
-            self.user_audio_buffer.clear()
-        else:
-            if self.stream_user_stt:
-                asr_result = self.online_asr.process_chunk(audio_chunk)
-
-            self.user_audio_buffer.push(audio_chunk)
-
-        if asr_result and (asr_result["confirmed_text"] or asr_result["unconfirmed_text"]):
-            text = asr_result["confirmed_text"] or asr_result["unconfirmed_text"] or "..."
+        if asr_result["text"]:
+            logger.debug(f"Adding text chunk: {asr_result['text']}")
             last_message = self.conversation_context.last_message()
             if last_message and last_message["role"] == "user":
-                last_message["content"][0]["text"] = text
+                last_message["content"][0]["text"] += ' ' + asr_result["text"]
                 self.conversation_context.update_message(last_message)
             else:
                 message = {
                     "role": "user",
-                    "content": [{"type": "text", "text": text}]
+                    "content": [{"type": "text", "text": asr_result["text"]}]
                 }
                 self.conversation_context.add_message(message)
 
-        if end_of_audio:
+            # if self.mode == "call":
+            #     asyncio.run_coroutine_threadsafe(
+            #         self._update_context(),
+            #         self._event_loop
+            #     )
+
+        if audio_chunk is None: # end of user audio
             self._stt_finished.set()
+
+        context_hash = self.conversation_context.get_hash()
+        trailing_silence = asr_result["vad_stats"]["trailing_silence"]
+        user_silence_before_response = call_mode_params["user_silence_before_response"][self._user_message_status]
+        if (
+            self.mode == "call" and 
+            trailing_silence > user_silence_before_response and
+            self._last_request_hash != context_hash
+        ):
+            logger.info(f"Triggering response for trailing silence {trailing_silence} > {user_silence_before_response}")
+            self.on_create_response()
+            self._interrupt_once.reset()
+            self._last_request_hash = context_hash
+
+    @logger.catch(reraise=True)
+    async def _update_context(self):
+        response = await self._completeness_agent.aclassify(self.conversation_context)
+        self._user_message_status = response["status"]
+        logger.debug(f"User message status: {self._user_message_status}")
 
     def on_user_text(self, text):
         message = {
@@ -110,19 +136,19 @@ class Conversation:
         self.user_attachments.append(content)
 
     def on_create_response(self):
-        self.voice_generator.interrupt()
         asyncio.run_coroutine_threadsafe(self._create_response(), self._event_loop)
 
     async def _create_response(self):
         try:
+            messages = self.conversation_context.get_messages()
+            if not messages or messages[-1]["role"] != "user":
+                logger.info("The last message is not a user message, skipping response")
+                self.emit_status('response_cancelled')
+                return
+
             self.audio_input_stream.stop() # (blocking) guarantee that the user audio buffer is decoded
             await self._stt_finished.wait()
             self._attach_documents()
-
-            messages = self.conversation_context.get_messages()
-            if not messages or messages[-1]["role"] != "user":
-                logger.debug("No need to respond")
-                return
 
             self.conversation_context.process_interrupted_messages()
             response = await self.character_agent.acompletion(self.conversation_context)
@@ -148,6 +174,8 @@ class Conversation:
             new_message = self.conversation_context.add_message(message)
 
             self._generate_voice(new_message)
+
+            self.emit_status('response_done')
         except Exception as e:
             self.emit_error(e)
             raise e
@@ -165,6 +193,10 @@ class Conversation:
                 }
                 self.conversation_context.add_message(message)
         self.user_attachments = []
+
+    def emit_status(self, status):
+        if self.status_cb:
+            asyncio.run_coroutine_threadsafe(self.status_cb(status), self._event_loop)
 
     def emit_error(self, error):
         if self.error_cb:
@@ -190,10 +222,16 @@ class Conversation:
         message["audio_duration"] = duration
         self.conversation_context.update_message(message)
 
-    def on_user_interrupt(self, speech_id, interrupted_at):
+    def on_user_interrupt(self, speech_id=None, interrupted_at=None):
         self.voice_generator.interrupt()
-        messages = self.conversation_context.get_messages(filter=lambda msg: msg["role"] == "assistant" and msg["id"] == speech_id)
-        assert messages, f"Message with speech_id {speech_id} not found"
-        message = messages[0]
-        message["interrupted_at"] = interrupted_at
-        self.conversation_context.update_message(message)
+        
+        if self.mode == "call":
+            logger.info(f"Triggering interrupt for detected user voice.")
+            self.emit_status("user_interrupt")
+
+        if speech_id:
+            messages = self.conversation_context.get_messages(filter=lambda msg: msg["role"] == "assistant" and msg["id"] == speech_id)
+            assert messages, f"Message with speech_id {speech_id} not found"
+            message = messages[0]
+            message["interrupted_at"] = interrupted_at
+            self.conversation_context.update_message(message)

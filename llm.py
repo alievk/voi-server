@@ -7,8 +7,9 @@ import random
 import asyncio
 import copy
 from loguru import logger
+import hashlib
 
-from text import SentenceStream
+from text import SentenceStream, NARRATOR_MARKER
 
 
 voice_tone_description = """<character voice tone> is used by the voice generator to choose the appropriate voice and intonation for <character response text>.
@@ -20,26 +21,28 @@ voice_tone_description = """<character voice tone> is used by the voice generato
   - "sad": conversation is sad, like a sad story or a sad conversation
 """
 
-narrator_comment_format_description = """<character response text> contains comments made by the narrator.
-The comments are always in the third person and enclosed in asterisks.
+narrator_comment_format_description = f"""<character response text> contains comments made by the narrator.
+The comments are always in the third person and enclosed in {NARRATOR_MARKER}.
 Examples:
-  - Are you serious?! *her eyes widened* How are you going to do that?
-  - *he looks down* I'm not sure I can do that.
-  - I'm glad you're here. *she rushed to hug him*
+  - Are you serious?! {NARRATOR_MARKER}her eyes widened{NARRATOR_MARKER} How are you going to do that?
+  - {NARRATOR_MARKER}he looks down{NARRATOR_MARKER} I'm not sure I can do that.
+  - I'm glad you're here. {NARRATOR_MARKER}she rushed to hug him{NARRATOR_MARKER}
 """
 
-character_agent_message_format_voice_tone = (
-    "Respond with the following JSON object:"
-    '{"text": "<character response text>", "voice_tone": "<character voice tone>"}'
-    f"\n{voice_tone_description}"
-)
+prompt_patterns = {
+    "character_agent_message_format_voice_tone": (
+        "Respond with the following JSON object:"
+        '{"text": "<character response text>", "voice_tone": "<character voice tone>"}'
+        f"\n{voice_tone_description}"
+    ),
 
-character_agent_message_format_narrator_comments = (
-    "Respond with the following JSON object:"
-    '{"text": "<character response text>", "voice_tone": "<character voice tone>"}'
-    f"\n{voice_tone_description}"
-    f"\n{narrator_comment_format_description}"
-)
+    "character_agent_message_format_narrator_comments": (
+        "Respond with the following JSON object:"
+        '{"text": "<character response text>", "voice_tone": "<character voice tone>"}'
+        f"\n{voice_tone_description}"
+        f"\n{narrator_comment_format_description}"
+    )
+}
 
 json_parse_error_response = {"text": "Sorry, I was lost in thought. Can you repeat that?", "voice_tone": "neutral"}
 
@@ -140,6 +143,9 @@ class ConversationContext:
 
             return messages
 
+    def get_hash(self):
+        return hashlib.md5(json.dumps(self._messages).encode()).hexdigest()
+
     def last_message(self):
         with self.lock:
             if not self._messages:
@@ -176,7 +182,7 @@ class ConversationContext:
 class AgentConfigManager:
     def __init__(self):
         self._agent_list = self._load_agent_list()
-        self._resolve_nested_agents()
+        self._resolve_refs()
 
     def _load_agent_list(self):
         agent_list = {}
@@ -186,15 +192,39 @@ class AgentConfigManager:
                     agent_list.update(json.load(f))
         return agent_list
 
-    def _resolve_nested_agents(self):
+    def _resolve_refs(self):
+        # resolve nested agents
         for agent_name, agent_config in self._agent_list.items():
             for key, value in agent_config.items():
                 if key.endswith("_agent") and isinstance(value, str):
                     self._agent_list[agent_name][key] = self._agent_list[value]
 
+        def resolve(value, vars=None):
+            if isinstance(value, list):
+                return [resolve(v, vars) for v in value]
+            elif isinstance(value, dict):
+                return {k: resolve(v, vars) for k, v in value.items()}
+
+            for pattern_name, pattern in prompt_patterns.items():
+                value = value.replace(f"{{prompt_pattern:{pattern_name}}}", pattern)
+
+            if vars:
+                for k, v in vars.items():
+                    value = value.replace(f"{{vars:{k}}}", str(v))
+
+            return value
+
+        for c in self._agent_list.values():
+            if "system_prompt" in c:
+                c["system_prompt"] = resolve(c["system_prompt"], c.get("vars"))
+            if "examples" in c:
+                c["examples"] = resolve(c["examples"], c.get("vars"))
+            if "greetings" in c:
+                c["greetings"]["choices"] = resolve(c["greetings"]["choices"], c.get("vars"))
+
     def add_agent(self, agent_name, agent_config):
         self._agent_list[agent_name] = agent_config
-        self._resolve_nested_agents()
+        self._resolve_refs()
 
     def get_config(self, agent_name):
         if agent_name not in self._agent_list:
@@ -211,9 +241,6 @@ class BaseLLMAgent:
     ):
         if isinstance(system_prompt, list):
             system_prompt = "\n".join(system_prompt)
-
-        system_prompt = system_prompt.replace("{character_agent_message_format_voice_tone}", character_agent_message_format_voice_tone)
-        system_prompt = system_prompt.replace("{character_agent_message_format_narrator_comments}", character_agent_message_format_narrator_comments)
 
         # force litellm to use OpenAI API if no provider is specified
         model_name = f"openai/{model_name}" if "/" not in model_name else model_name
@@ -350,9 +377,9 @@ class BaseLLMAgent:
         return ""
 
     def _messages_to_text(self, messages):
-        def truncate_content(content, max_length=100):
-            if isinstance(content, str):
-                return content[:max_length] + "..." if len(content) > max_length else content
+        def truncate_content(content, max_image_length=100):
+            if isinstance(content, str) and content.startswith("data:image"):
+                return content[:max_image_length] + "..." if len(content) > max_image_length else content
             if isinstance(content, dict):
                 return {k: truncate_content(v) for k, v in content.items()}
             if isinstance(content, list):
@@ -555,6 +582,34 @@ class ControlLLMAgent(BaseLLMAgent):
             return False
         
         return True
+
+
+class CompletenessAgent(BaseLLMAgent):
+    def __init__(self, system_prompt, model_name="gpt-4o-mini", examples=None):
+        super().__init__(
+            model_name=model_name,
+            system_prompt=system_prompt,
+            examples=examples,
+        )
+
+    @staticmethod
+    def from_config(config):
+        return CompletenessAgent(
+            system_prompt=config["system_prompt"],
+            model_name=config.get("model"),
+            examples=config.get("examples")
+        )
+
+    async def aclassify(self, context):
+        _context = ConversationContext()
+        _context.add_message({
+            "role": "user",
+            "content": [{
+                "type": "text",
+                "text": "\n".join(["Conversation:"] + ["-" + msg["role"] + ": " + msg["content"][0]["text"] for msg in context.get_messages()])
+            }]
+        })
+        return await super().acompletion(_context)
 
 
 def _setup_litellm():
