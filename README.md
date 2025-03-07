@@ -30,6 +30,7 @@ Voi is a free and open source backend for realtime voice agents. Check the JS [c
 
 - 02/10/2025 - Voi is open source 🎉
 - 02/22/2025 - Added user images support
+- 03/07/2025 - Added call mode 📞
 
 ## Requirements
 
@@ -273,7 +274,7 @@ Here you can set any number of `n_days` when your token will expire.
 - [ ] Incoming calls
   - [ ] Context gathering: understand user's problem
   - [ ] Function calling: add external actuators like DB inquiry
-  - [ ] Turn detection: detect a moment when agent can start to speak
+  - [x] Turn detection: detect a moment when agent can start to speak
   - [ ] Add a call-center-like voice
 - [ ] WebRTC support
 - [ ] VoIP support
